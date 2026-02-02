@@ -119,7 +119,7 @@ def build_schedule_from_config(
     training_mode = exp_cfg.experiment.get("training_mode", "offline")
     cross_task = exp_cfg.experiment.get("cross_task", False)
     shuffle_enabled = exp_cfg.experiment.get("shuffle", False)
-    seed = exp_cfg.experiment.get("seed")
+    seed = exp_cfg.experiment.get("shuffle", {}).get("seed", None)
 
     # 获取任务列表
     tasks_cfg = exp_cfg.tasks
