@@ -53,7 +53,7 @@ The benchmark spans **6 interactive tasks** across 4 grounding types:
 
 AgentMemoryBench supports **5 complementary evaluation modes** to provide multi-dimensional assessment of memory systems:
 
-![Evaluation Modes](iclr2026/figures/evaluation_mode.png)
+![Evaluation Modes](figures/evaluation_mode.png)
 
 ### 1. **Offline Mode**
 Traditional train-test split evaluation. The agent learns from training samples (memory formation & evolution) and is tested on held-out samples (retrieval only).
