@@ -86,21 +86,45 @@ def is_system_memory_task(task_name: str) -> bool:
     return any(x in task_lower for x in ["db", "os", "kg", "webshop", "alfworld", "dbbench", "osbench", "kgbench"])
 
 
+def has_subdirectory_structure(output_dir: Path, execution_order: List[Dict]) -> bool:
+    """
+    检查输出目录是否使用子目录结构（每个任务一个子目录）
+    """
+    if not execution_order:
+        return False
+
+    # 取第一个样本，检查文件是否在子目录中
+    first_item = execution_order[0]
+    task_name = first_item.get("task", "")
+    index = first_item.get("index")
+
+    if not task_name or index is None:
+        return False
+
+    # 检查子目录中的文件是否存在
+    task_dir = output_dir / task_name
+    result_file_in_subdir = task_dir / f"{index}.json"
+
+    # 检查主目录中的文件是否存在
+    result_file_in_main = output_dir / f"{index}.json"
+
+    # 如果子目录中的文件存在，说明使用子目录结构
+    if result_file_in_subdir.exists():
+        return True
+    # 如果主目录中的文件存在，说明不使用子目录结构
+    elif result_file_in_main.exists():
+        return False
+
+    # 如果都不存在，默认返回 False
+    return False
+
+
 def detect_task_type(output_dir: Path) -> str:
     """
     根据任务名称或数据特征检测任务类型
     返回 "personal"、"system" 或 "mixed"
     """
-    # 从路径中提取任务名称
-    parts = output_dir.parts
-    task_name = None
-    for part in parts:
-        if part.startswith("locomo"):
-            return "personal"
-        elif part in ["db", "os", "kg", "webshop", "alfworld"] or "dbbench" in part or "osbench" in part or "kgbench" in part:
-            return "system"
-    
-    # 如果无法从路径判断，尝试读取 execution_order.json 检测混合场景
+    # 优先读取 execution_order.json 来准确检测混合场景
     execution_order_file = output_dir / "execution_order.json"
     if execution_order_file.exists():
         with open(execution_order_file, 'r', encoding='utf-8') as f:
@@ -112,18 +136,36 @@ def detect_task_type(output_dir: Path) -> str:
                     task = item.get("task", "")
                     if task:
                         task_names.add(task)
-                
+
                 # 检查是否同时包含 system 和 personal memory 任务
                 has_system = any(is_system_memory_task(t) for t in task_names)
                 has_personal = any(is_personal_memory_task(t) for t in task_names)
-                
+
                 if has_system and has_personal:
                     return "mixed"
                 elif has_personal:
                     return "personal"
                 elif has_system:
                     return "system"
-    
+
+    # 如果无法从 execution_order.json 判断，尝试从路径中提取任务名称
+    parts = output_dir.parts
+    has_system_in_path = False
+    has_personal_in_path = False
+
+    for part in parts:
+        if part.startswith("locomo") or "locomo" in part.lower():
+            has_personal_in_path = True
+        if part in ["db", "os", "kg", "webshop", "alfworld"] or "dbbench" in part or "osbench" in part or "kgbench" in part:
+            has_system_in_path = True
+
+    if has_system_in_path and has_personal_in_path:
+        return "mixed"
+    elif has_personal_in_path:
+        return "personal"
+    elif has_system_in_path:
+        return "system"
+
     # 默认返回 system（更常见）
     return "system"
 
@@ -500,20 +542,25 @@ def calculate_cumulative_success_rate(
     
     # 按 execution_order 排序
     execution_order.sort(key=lambda x: x.get("execution_order", 0))
-    
+
+    # 检查是否使用子目录结构
+    use_subdirs = has_subdirectory_structure(output_dir, execution_order)
+    if use_subdirs:
+        print(f"Detected subdirectory structure: using task subdirectories for data files")
+
     if task_type == "mixed":
         # 混合场景：分别计算 system memory 和 personal memory 任务
         return calculate_cumulative_success_rate_mixed(
             execution_order, output_dir, output_file, plot_file
         )
-    
+
     # 选择成功判断函数
     is_success_func = is_success_for_personal_memory if task_type == "personal" else is_success_for_system_memory
-    
+
     if task_type == "system":
         # System memory 任务：直接计算总体
         cumulative_rates, success_counts, total_counts, results_data = calculate_cumulative_success_rate_single(
-            execution_order, output_dir, is_success_func, is_mixed=False
+            execution_order, output_dir, is_success_func, is_mixed=use_subdirs
         )
         
         cumulative_rate = cumulative_rates[-1] if cumulative_rates else 0.0
@@ -544,21 +591,22 @@ def calculate_cumulative_success_rate(
             index = order_item.get("index")
             if index is None:
                 continue
-            result_data = load_sample_result(output_dir, index)
+            task_name = order_item.get("task", "") if use_subdirs else None
+            result_data = load_sample_result(output_dir, index, task_name)
             if result_data is None:
                 continue
             category = result_data.get("result", {}).get("category")
             if category is not None:
                 categories.add(category)
-        
+
         categories = sorted(categories)
         print(f"Found {len(categories)} categories: {categories}")
-        
+
         # 计算每个 category 的累积成功率
         sub_task_results = {}
         for category in categories:
             cumulative_rates, success_counts, total_counts, results_data = calculate_cumulative_success_rate_single(
-                execution_order, output_dir, is_success_func, category_filter=category, is_mixed=False
+                execution_order, output_dir, is_success_func, category_filter=category, is_mixed=use_subdirs
             )
             
             cumulative_rate = cumulative_rates[-1] if cumulative_rates else 0.0
@@ -582,7 +630,7 @@ def calculate_cumulative_success_rate(
         
         # 计算总体的累积成功率
         cumulative_rates_overall, success_counts_overall, total_counts_overall, results_data_overall = calculate_cumulative_success_rate_single(
-            execution_order, output_dir, is_success_func, is_mixed=False
+            execution_order, output_dir, is_success_func, is_mixed=use_subdirs
         )
         
         cumulative_rate_overall = cumulative_rates_overall[-1] if cumulative_rates_overall else 0.0

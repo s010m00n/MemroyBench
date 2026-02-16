@@ -22,6 +22,8 @@ from src.server.tasks.locomo.task import (
 SESSION_INJECTION_MARKER = "__SESSION_INJECTION__"
 # 特殊标记：用于表示 replay 模式的测试样本
 REPLAY_TEST_MARKER = "__REPLAY_TEST__"
+# 特殊标记：用于表示 repair 模式的组标记
+REPAIR_GROUP_MARKER = "__REPAIR_GROUP__"
 
 def load_task_instance(task_name: str, exp_cfg: ExperimentConfig):
     """根据 task_name 加载对应的 task 实例（用于 locomo 任务的特殊处理）"""
@@ -580,5 +582,178 @@ def build_offline_locomo_schedule(
 
     print(f"[Offline Locomo Schedule] Total schedule length: {len(schedule)} ({len(session_ids)} injections + {len(all_qa_indices)} QAs)")
     return schedule
+
+
+def build_repair_schedule(
+    task_to_indices: Dict[TaskName, List[SampleIndex]],
+    repair_m: int,
+    repair_n: int,
+    repair_seed: int,
+    shuffle_enabled: bool,
+    seed: int | None,
+) -> Tuple[Schedule, Dict[int, Dict[str, Any]]]:
+    """
+    构建 repair 模式的调度：测试记忆系统处理知识冲突的能力。
+
+    Repair 模式的流程：
+    1. 将所有样本分成大小为 repair_m 的组（repair1, repair2, ...）
+    2. 在每个组内，随机选择 repair_n 个样本进行奖励反转
+    3. 每个组执行 4 个阶段：
+       - wrongJudgeFull: 学习全部 m 个样本（带错误奖励）
+       - wrongJudgeStandard: 只学习 n 个反转样本（带错误奖励）
+       - wrongJudgeTestFull: 测试全部 m 个样本（用正确奖励）
+       - wrongJudgeTestStandard: 测试 n 个反转样本（用正确奖励）
+       - rightJudgeFull: 重新学习全部 m 个样本（用正确奖励）
+       - rightJudgeStandard: 只学习 n 个反转样本（用正确奖励）
+       - rightJudgeTestFull: 测试全部 m 个样本（用正确奖励）
+       - rightJudgeTestStandard: 测试 n 个反转样本（用正确奖励）
+
+    Args:
+        task_to_indices: 任务到样本索引的映射（应该只有一个任务）
+        repair_m: 每组的样本数量
+        repair_n: 每组中需要反转奖励的样本数量
+        repair_seed: 选择反转样本的随机种子
+        shuffle_enabled: 是否对所有样本进行 shuffle（在分组之前）
+        seed: shuffle 的随机种子
+
+    Returns:
+        (schedule, repair_info):
+        - schedule: 调度序列，包含 repair 组标记和样本
+        - repair_info: 每个 repair 组的信息 {repair_id: {"all_samples": [...], "reversed_samples": [...]}}
+    """
+    import random as rnd
+
+    if len(task_to_indices) != 1:
+        raise ValueError(f"repair mode requires exactly 1 task, but got {len(task_to_indices)} tasks")
+
+    task_name = list(task_to_indices.keys())[0]
+    all_indices = list(task_to_indices[task_name])
+
+    # 1. 准备所有样本（如果 shuffle=True，则 shuffle）
+    all_samples = list(all_indices)
+    if shuffle_enabled:
+        rng = rnd.Random(seed)
+        rng.shuffle(all_samples)
+        print(f"[Repair Schedule] Shuffled {len(all_samples)} samples before grouping")
+    else:
+        print(f"[Repair Schedule] {len(all_samples)} samples (no shuffle before grouping)")
+
+    # 2. 分组：每组 repair_m 个样本
+    repair_groups: List[List[SampleIndex]] = []
+    for i in range(0, len(all_samples), repair_m):
+        group = all_samples[i:i + repair_m]
+        repair_groups.append(group)
+
+    print(f"[Repair Schedule] Created {len(repair_groups)} repair groups (m={repair_m})")
+
+    # 3. 为每个组随机选择 repair_n 个样本进行奖励反转
+    repair_rng = rnd.Random(repair_seed)
+    repair_info: Dict[int, Dict[str, Any]] = {}
+
+    schedule: Schedule = []
+
+    for repair_id, group_samples in enumerate(repair_groups, start=1):
+        # 从当前组中随机选择 n 个样本进行奖励反转
+        n_to_reverse = min(repair_n, len(group_samples))
+        reversed_samples = repair_rng.sample(group_samples, n_to_reverse)
+
+        # 记录该 repair 组的信息
+        repair_info[repair_id] = {
+            "all_samples": group_samples.copy(),
+            "reversed_samples": reversed_samples.copy()
+        }
+
+        # 添加 repair 组标记到 schedule（用于在 main 中识别组边界）
+        schedule.append((REPAIR_GROUP_MARKER, repair_id))
+
+        print(f"[Repair Schedule] Repair {repair_id}: {len(group_samples)} samples total, {n_to_reverse} reversed")
+
+    print(f"[Repair Schedule] Total repair groups: {len(repair_groups)}")
+    return schedule, repair_info
+
+
+def build_repair_schedule_for_locomo(
+    task_name: TaskName,
+    locomo_task_instance: Any,
+    repair_size_locomo: float,
+    repair_seed: int,
+    shuffle_enabled: bool,
+    seed: int | None,
+) -> Tuple[Schedule, Dict[int, Dict[str, Any]]]:
+    """
+    构建 locomo 任务的 repair 模式调度：按 session 划分，测试记忆系统处理知识冲突的能力。
+
+    对于 locomo 任务，repair 模式按 session 划分（忽略 repair_m 参数）：
+    - Repair 1 = Session 1：随机选择 repair_size_locomo * session_qa_count 个 QA 进行奖励反转
+    - Repair 2 = Session 2：随机选择 repair_size_locomo * session_qa_count 个 QA 进行奖励反转
+    - ...
+
+    每个 session（repair 组）执行 4 个阶段（与系统记忆任务相同）：
+    - wrongJudgeFull: 注入 session + 学习全部 QA（带错误奖励）
+    - wrongJudgeStandard: 只学习反转的 QA（带错误奖励）
+    - wrongJudgeTestFull: 测试全部 QA（用正确奖励）
+    - wrongJudgeTestStandard: 测试反转的 QA（用正确奖励）
+    - rightJudgeFull: 重新学习全部 QA（用正确奖励）
+    - rightJudgeStandard: 只学习反转的 QA（用正确奖励）
+    - rightJudgeTestFull: 测试全部 QA（用正确奖励）
+    - rightJudgeTestStandard: 测试反转的 QA（用正确奖励）
+
+    Args:
+        task_name: locomo 任务名称
+        locomo_task_instance: locomo 任务实例
+        repair_size_locomo: 每个 session 中需要反转奖励的 QA 比例（0-1之间，如 0.5 表示反转 50%）
+        repair_seed: 选择反转 QA 的随机种子
+        shuffle_enabled: 是否对每个 session 内的 QA 进行 shuffle
+        seed: shuffle 的随机种子
+
+    Returns:
+        (schedule, repair_info):
+        - schedule: 调度序列，包含 session 注入标记和 repair 组标记
+        - repair_info: 每个 repair 组（session）的信息 {repair_id: {"session_id": ..., "all_qa": [...], "reversed_qa": [...]}}
+    """
+    import random as rnd
+
+    rng = rnd.Random(seed) if shuffle_enabled else None
+    repair_rng = rnd.Random(repair_seed)
+
+    schedule: Schedule = []
+    repair_info: Dict[int, Dict[str, Any]] = {}
+
+    session_ids = locomo_task_instance.session_ids
+    print(f"[Locomo Repair Schedule] Processing {len(session_ids)} sessions: {session_ids}")
+
+    repair_id = 1
+    for session_id in session_ids:
+        # 1. 获取当前 session 的所有 QA 索引
+        session_qa_indices = locomo_task_instance.get_qa_indices_for_session(session_id)
+
+        # 2. 如果 shuffle=True，打乱当前 session 内的 QA 顺序
+        if shuffle_enabled and rng:
+            qa_list = list(session_qa_indices)
+            rng.shuffle(qa_list)
+            session_qa_indices = qa_list
+
+        # 3. 从当前 session 的 QA 中根据 repair_size_locomo 比例选择需要反转的 QA
+        n_to_reverse = max(1, int(len(session_qa_indices) * repair_size_locomo))  # 至少反转1个
+        reversed_qa = repair_rng.sample(session_qa_indices, n_to_reverse)
+
+        # 4. 记录该 repair 组（session）的信息
+        repair_info[repair_id] = {
+            "session_id": session_id,
+            "all_qa": list(session_qa_indices),
+            "reversed_qa": reversed_qa.copy()
+        }
+
+        # 5. 添加 session 注入标记（在 wrongJudgeFull 阶段需要）
+        schedule.append((SESSION_INJECTION_MARKER, session_id))
+
+        # 6. 添加 repair 组标记
+        schedule.append((REPAIR_GROUP_MARKER, repair_id))
+
+        print(f"[Locomo Repair Schedule] Repair {repair_id} (Session {session_id}): {len(session_qa_indices)} QAs total, {n_to_reverse} reversed ({repair_size_locomo*100:.0f}%)")
+        repair_id += 1
+
+    print(f"[Locomo Repair Schedule] Total repair groups: {len(session_ids)}")
+    return schedule, repair_info
 
 

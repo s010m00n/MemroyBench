@@ -3,10 +3,23 @@ module: src.client.agents.HTTPAgent
 parameters:
   # ===== 基础 HTTP 配置（请根据自己的服务修改） =====
   url: https://api.siliconflow.cn/v1/chat/completions
-
+# 
   headers:
     Content-Type: application/json
-    Authorization: "Bearer sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    # 176
+    # Authorization: "Bearer sk-dehnduvlxcxjjfoeuxnehbyqeelzigotvijyhoqahogedhro"
+    
+    # 132
+    # Authorization: "Bearer sk-ariujdmfjqgfenygjstreeuzvfisddhqeqaidqzbamqffllp"
+
+    # 186
+    Authorization: "Bearer sk-ctzhtskphjvythtitichvowadgmcruzuxxoqiidzueakjkbx"
+
+    # 134
+    # Authorization: "Bearer sk-boccqkdcupuxjnvwlmngvjlxfqpzvllknewhoyajoogmdgda"
+
+    # 学长
+    # Authorization: "Bearer sk-lulftrotchteqxihtxojzyxouozpcyihhnumstxlcffkxovw"
 
   # ===== 默认模型调用参数（可被 agent.yaml 覆盖） =====
   body:

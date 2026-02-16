@@ -89,13 +89,14 @@ def _register_all_memories():
         default_config_path="memory/mem0/mem0.yaml",
     )
 
-    # mems (统一使用小写)
-    from memory.MEMs.MEMs import load_mems_from_yaml
-    register_memory(
-        name="mems",
-        loader_func=load_mems_from_yaml,
-        default_config_path="memory/MEMs/MEMs.yaml",
-    )
+    # TODO: MEMs implementation will be added later
+    # # mems (统一使用小写)
+    # from memory.MEMs.MEMs import load_mems_from_yaml
+    # register_memory(
+    #     name="mems",
+    #     loader_func=load_mems_from_yaml,
+    #     default_config_path="memory/MEMs/MEMs.yaml",
+    # )
 
     # awm_pro (统一使用 snake_case)
     from memory.awmPro.awmPro import load_awmpro_from_yaml

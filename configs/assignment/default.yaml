@@ -41,7 +41,7 @@ tasks:
 # ===== 记忆机制配置 =====
 # 从 memory 文件夹中选择记忆机制（统一使用 snake_case 命名）
 memory_mechanism:
-  name: awm_pro  # 可选: zero_shot, stream_icl, mem0, awm_pro, mems
+  name: zero_shot  # 可选: zero_shot, stream_icl, mem0, awm_pro
 
 # ===== 执行方法配置 =====
 # 从 execution 文件夹中选择执行方法
@@ -51,23 +51,33 @@ execution_method:
 
 # ===== 实验参数 =====
 experiment:
-  # 训练模式: online (在线学习) 或 offline (离线学习) 或 replay (重放学习) 或 transfer (迁移学习) 
-  training_mode: online  # online | offline | replay | transfer
+  # 训练模式: online (在线学习) 或 offline (离线学习) 或 replay (重放学习) 或 transfer (迁移学习)  或 repair（修复学习）
+  training_mode: online  # online | offline | replay | transfer | repair
   
   keep_number: 700 #只有training_mode等于online时，这个参数才有效 #为None或者小于等于0，则不进行截断
 
-  train_size: 0.7 #只有training_mode等于offline时，这个参数才有效
+  train_size: 0.6 #只有training_mode等于offline时，这个参数才有效
 
   #在transfer_task中学习（update+enhance，相当于online），在transfer_after_task中进行测试（仅enhance）
   transfer_task: dbbench-std #只有training_mode等于transfer时，这个参数才有效
-  transfer_after_task: locomo-0 #只有training_mode等于transfer时，这个参数才有效
+  transfer_after_task: os-std #只有training_mode等于transfer时，这个参数才有效
+  forward_transfer_num: 3 #只有training_mode等于transfer且transfer_task==transfer_after_task时，这个参数才有效，表示前向迁移的步数
 
   #这两个参数的意思是，每学过m个样本（update+enhance，相当于online），就从学过的所有样本中随机抽样n个进行测试（仅enhance）
-  replay_m: 19 #只有training_mode等于replay时，这个参数才有效
-  replay_n: 19 #只有training_mode等于replay时，这个参数才有效
-  replay_seed: 1 #只有training_mode等于replay时，这个参数才有效
+  replay_m: 20 #只有training_mode等于replay时，这个参数才有效
+  replay_n: 20 #只有training_mode等于replay时，这个参数才有效
+  replay_seed: 66 #只有training_mode等于replay时，这个参数才有效
+
+  #这两个参数的意思是，将所有的case按照m分成x组，然后组与组之前是串行学习的，这没毛病，但是每个组中会有n个case的judge是错乱的
+  repair_m: 20  # 只有training_mode等于repair时，这个参数才有效（对于普通任务），每组的样本数量
+  repair_n: 20  # 只有training_mode等于repair时，这个参数才有效，每组中需要反转奖励的样本数量
+  repair_seed: 66  # 只有training_mode等于repair时，这个参数才有效，选择反转样本的随机种子
+  repair_size_locomo: 0.5  # 只有training_mode等于repair且任务为locomo时有效，表示每个session中需要反转的QA比例（0-1之间）
 
   # 跨任务学习: 是否允许跨任务的知识传递和学习
+  # - online 模式：
+  #   * cross_task=True or cross_task=False all ok
+  #   * eg. dbbench+locomo-0，我们可以模拟现实情况中任务边界不清晰的agents实际工作场景
   # - offline 模式：
   #   * 不支持 cross_task=True，会报错
   #   * 必须 cross_task=False，且只能选中一个数据集
@@ -78,15 +88,24 @@ experiment:
   #   * cross_task=False 时，必须只能选中一个数据集（否则会报错）
   #   * cross_task=True 时，必须选中大于一个数据集（否则会报错）
   # - transfer 模式（迁移学习）：
-  #   * 必须 cross_task=True（不支持 cross_task=False，不支持locomo）
-  #   * 必须选中两个任务：transfer_task 和 transfer_after_task
-  #   * 选中的任务必须包含 transfer_task 和 transfer_after_task
-  #   * 如果 shuffle.enabled=True，两个任务各自 shuffle，都使用 shuffle.seed
+  #   * 当 transfer_task != transfer_after_task（跨任务迁移）：
+  #     - 必须 cross_task=True（不支持 cross_task=False，不支持locomo）
+  #     - 必须选中两个任务：transfer_task 和 transfer_after_task
+  #     - 选中的任务必须包含 transfer_task 和 transfer_after_task
+  #     - 如果 shuffle.enabled=True，两个任务各自 shuffle，都使用 shuffle.seed
+  #   * 当 transfer_task == transfer_after_task（前向迁移）：
+  #     - 可以是任意任务（包括locomo）
+  #     - 必须设置 forward_transfer_num 参数
+  #     - 主线相当于 online 模式，每完成一个case后用当前记忆测试往后第N个case
+  #     - 对于locomo任务，计数时跳过session
   # - replay 模式（重放学习）：
   #   * 必须 cross_task=False（不支持 cross_task=True）
   #   * 必须只选中一个任务
   #   * 如果 shuffle.enabled=True，训练样本使用 shuffle.seed 进行 shuffle
   #   * 测试样本随机抽样使用 replay_seed（不涉及 shuffle）
+  # - repair 模式（修复学习）：
+  #   * 必须 cross_task=False（不支持 cross_task=True）
+  #   * 必须只选中一个任务
   cross_task: False  # True | False
 
   # 数据打乱: 是否打乱任务顺序，可以设置随机种子

@@ -1,10 +1,10 @@
 mem0:
-  api_key: "m0-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  api_key: "m0-vTSCGTQMxZ5Bpxv8uBflBSO2jzqyiDvdjY1QEKT6"
 
   # ===== user_id 配置 =====
   # 用户自定义的 user_id，用于在 Mem0 Platform 中分组记忆
   # 例如："experiment_001", "dbbench_cross_task", "alfworld_online" 等
-  user_id: "exp_027"
+  user_id: "exp_067"
 
   # ===== 记忆操作配置 =====
   infer: true  # true: 自动提取结构化记忆，false: 存储原始消息
@@ -33,4 +33,4 @@ mem0:
   retry_backoff: 2.0  # 指数退避倍数（每次重试延迟 = 上次延迟 * retry_backoff）
   
   # ===== 等待配置 =====
-  wait_time: 150.0  # 每次成功添加记忆后等待的时间
+  wait_time: 60.0  # 每次成功添加记忆后等待的时间

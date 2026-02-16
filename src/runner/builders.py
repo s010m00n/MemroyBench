@@ -105,7 +105,7 @@ def build_schedule_from_config(
         }
     """
     # 步骤 1: 构建任务索引
-    task_to_indices = _build_task_indices(exp_cfg, backend)
+    task_to_indices = _build_task_indices(exp_cfg, backend, locomo_task_instance, locomo_task_name)
 
     # 步骤 2: 构建基础调度
     base_schedule, replay_info = _build_base_schedule(
@@ -118,7 +118,9 @@ def build_schedule_from_config(
     # 步骤 3: 如果是 offline，分割 train/test
     training_mode = exp_cfg.experiment.get("training_mode", "offline")
     if training_mode == "offline":
-        train_schedule, test_schedule = _split_train_test(base_schedule, exp_cfg)
+        train_schedule, test_schedule = _split_train_test(
+            base_schedule, exp_cfg, locomo_task_instance
+        )
     else:
         train_schedule = base_schedule
         test_schedule = None
@@ -131,28 +133,40 @@ def build_schedule_from_config(
     }
 
 
-def _build_task_indices(exp_cfg: ExperimentConfig, backend) -> dict:
+def _build_task_indices(exp_cfg: ExperimentConfig, backend, locomo_task_instance=None, locomo_task_name=None) -> dict:
     """
     步骤 1: 构建任务索引映射
 
     Args:
         exp_cfg: 实验配置
         backend: 后端客户端
+        locomo_task_instance: locomo 任务实例（可选）
+        locomo_task_name: locomo 任务名称（可选）
 
     Returns:
         {task_name: [sample_indices]}
     """
+    from src.runner.schedule_utils import is_locomo_task
+
     tasks_cfg = exp_cfg.tasks
     task_names = [t["name"] for t in tasks_cfg if "name" in t]
 
     task_to_indices = {}
     for task_name in task_names:
-        try:
-            indices = backend.get_indices(task_name)
+        # 对于 locomo 任务，从任务实例中获取 QA 索引
+        if is_locomo_task(task_name) and locomo_task_instance is not None and task_name == locomo_task_name:
+            # Locomo 任务：索引是 QA 列表的索引
+            indices = list(range(len(locomo_task_instance.qa_list)))
             task_to_indices[task_name] = indices
-        except Exception as e:
-            print(f"Warning: Failed to get indices for task {task_name}: {e}")
-            task_to_indices[task_name] = []
+            print(f"[Locomo Task] {task_name}: {len(indices)} QA samples")
+        else:
+            # 普通任务：从 backend 获取索引
+            try:
+                indices = backend.get_indices(task_name)
+                task_to_indices[task_name] = indices
+            except Exception as e:
+                print(f"Warning: Failed to get indices for task {task_name}: {e}")
+                task_to_indices[task_name] = []
 
     return task_to_indices
 
@@ -179,6 +193,8 @@ def _build_base_schedule(
         build_transfer_schedule,
         build_replay_schedule,
         build_replay_schedule_for_locomo,
+        build_repair_schedule,
+        build_repair_schedule_for_locomo,
         build_mixed_schedule,
         build_locomo_session_schedule,
         build_offline_locomo_schedule,
@@ -199,13 +215,25 @@ def _build_base_schedule(
         # Transfer 模式：先训练 transfer_task，再测试 transfer_after_task
         transfer_task = exp_cfg.experiment.get("transfer_task")
         transfer_after_task = exp_cfg.experiment.get("transfer_after_task")
-        schedule = build_transfer_schedule(
-            task_to_indices=task_to_indices,
-            transfer_task=transfer_task,
-            transfer_after_task=transfer_after_task,
-            shuffle_enabled=shuffle_enabled,
-            seed=seed,
-        )
+
+        # 检查是否是 locomo 任务的前向迁移
+        if transfer_task == transfer_after_task and locomo_task_name and locomo_task_instance:
+            # 前向迁移 + locomo 任务：使用 session 调度
+            schedule = build_locomo_session_schedule(
+                locomo_task_name=locomo_task_name,
+                locomo_task_instance=locomo_task_instance,
+                shuffle_enabled=shuffle_enabled,
+                seed=seed,
+            )
+        else:
+            # 跨任务迁移 或 非 locomo 任务：使用默认 transfer 调度
+            schedule = build_transfer_schedule(
+                task_to_indices=task_to_indices,
+                transfer_task=transfer_task,
+                transfer_after_task=transfer_after_task,
+                shuffle_enabled=shuffle_enabled,
+                seed=seed,
+            )
 
     elif training_mode == "replay":
         # Replay 模式：周期性测试已学知识
@@ -227,6 +255,34 @@ def _build_base_schedule(
                 replay_m=replay_m,
                 replay_n=replay_n,
                 replay_seed=replay_seed,
+                shuffle_enabled=shuffle_enabled,
+                seed=seed,
+            )
+
+    elif training_mode == "repair":
+        # Repair 模式：测试记忆系统处理知识冲突的能力
+        if locomo_task_name:
+            # Locomo 任务的 repair：按 session 划分（使用 repair_size_locomo）
+            repair_size_locomo = exp_cfg.experiment.get("repair_size_locomo")
+            repair_seed = exp_cfg.experiment.get("repair_seed")
+            schedule, replay_info = build_repair_schedule_for_locomo(
+                task_name=locomo_task_name,
+                locomo_task_instance=locomo_task_instance,
+                repair_size_locomo=repair_size_locomo,
+                repair_seed=repair_seed,
+                shuffle_enabled=shuffle_enabled,
+                seed=seed,
+            )
+        else:
+            # 普通任务的 repair：按 m/n 参数划分
+            repair_m = exp_cfg.experiment.get("repair_m")
+            repair_n = exp_cfg.experiment.get("repair_n")
+            repair_seed = exp_cfg.experiment.get("repair_seed")
+            schedule, replay_info = build_repair_schedule(
+                task_to_indices=task_to_indices,
+                repair_m=repair_m,
+                repair_n=repair_n,
+                repair_seed=repair_seed,
                 shuffle_enabled=shuffle_enabled,
                 seed=seed,
             )
@@ -273,22 +329,47 @@ def _build_base_schedule(
     return schedule, replay_info
 
 
-def _split_train_test(schedule, exp_cfg: ExperimentConfig):
+def _split_train_test(schedule, exp_cfg: ExperimentConfig, locomo_task_instance=None):
     """
     步骤 3: 如果是 offline 模式，分割 train/test
+
+    对于 locomo 任务：
+    - 训练集 = 所有 session injection markers（用于注入上下文到记忆）
+    - 测试集 = 所有 QA（用于测试记忆检索效果）
+    - 忽略 train_size 参数
+
+    对于普通任务：
+    - 按 train_size 比例分割
 
     Args:
         schedule: 基础调度序列
         exp_cfg: 实验配置
+        locomo_task_instance: locomo 任务实例（可选）
 
     Returns:
         (train_schedule, test_schedule) 元组
     """
-    train_size = exp_cfg.experiment.get("train_size", 0.8)
-    split_point = int(len(schedule) * train_size)
-    train_schedule = schedule[:split_point]
-    test_schedule = schedule[split_point:]
+    from src.runner.schedule_utils import SESSION_INJECTION_MARKER
 
-    print(f"[Offline Mode] Split schedule: train={len(train_schedule)}, test={len(test_schedule)} (train_size={train_size})")
+    # 检查是否是 locomo offline 模式
+    if locomo_task_instance is not None:
+        # Locomo 模式：train = sessions, test = all QAs
+        # 分割点 = session 的数量
+        split_point = len(locomo_task_instance.session_ids)
+        train_schedule = schedule[:split_point]
+        test_schedule = schedule[split_point:]
+
+        print(f"[Offline Locomo Mode] Split schedule:")
+        print(f"  - Train: {len(train_schedule)} session injections")
+        print(f"  - Test: {len(test_schedule)} QAs")
+        print(f"  - train_size parameter is IGNORED for locomo tasks")
+    else:
+        # 普通任务：按 train_size 比例分割
+        train_size = exp_cfg.experiment.get("train_size", 0.8)
+        split_point = int(len(schedule) * train_size)
+        train_schedule = schedule[:split_point]
+        test_schedule = schedule[split_point:]
+
+        print(f"[Offline Mode] Split schedule: train={len(train_schedule)}, test={len(test_schedule)} (train_size={train_size})")
 
     return train_schedule, test_schedule
