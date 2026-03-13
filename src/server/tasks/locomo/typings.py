@@ -68,10 +68,10 @@ class RewardHistoryItem(BaseModel):
 
     def __init__(self, **data):
         super().__init__(**data)
-        # 不再自动把 score 添加到 metrics 中，避免重复
-        # score 和 metrics 是独立的字段：
-        # - score: 用于 memory 机制的样本质量分数（用于排序和选择）
-        # - metrics: 详细的评估指标（f1_score, bleu_score, llm_score 等）
+        # score is no longer auto-added to metrics to avoid duplication.
+        # score and metrics are independent fields:
+        # - score: sample quality score used by memory mechanisms (for ranking and selection)
+        # - metrics: detailed evaluation metrics (f1_score, bleu_score, llm_score, etc.)
 
 
 HistoryItem = RootModel[Union[ChatCompletionMessageParam, RewardHistoryItem]]

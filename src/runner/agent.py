@@ -1,5 +1,5 @@
 """
-LLM Agent 模块
+LLM Agent module.
 """
 from __future__ import annotations
 
@@ -20,10 +20,10 @@ LLMAPI_DIR = ROOT_DIR / "configs" / "llmapi"
 
 class SimpleHTTPChatAgent:
     """
-    一个最简版的 LLM agent：
-    - 从 configs/llmapi/api.yaml + agent.yaml 读取 HTTP 配置
-    - 调用 OpenAI 风格的 chat completions 接口，支持 tools / tool_choice=auto
-    - 简单的 429 / 500 重试
+    A minimal LLM agent:
+    - Reads HTTP configuration from configs/llmapi/api.yaml + agent.yaml
+    - Calls an OpenAI-style chat completions endpoint, supporting tools / tool_choice=auto
+    - Simple 429 / 500 retry logic
     """
 
     def __init__(self, agent_name: str) -> None:
@@ -33,9 +33,9 @@ class SimpleHTTPChatAgent:
     @staticmethod
     def _load_agent_config(agent_name: str) -> Tuple[str, Dict[str, Any], Dict[str, Any]]:
         """
-        复用 test_client.py 中的合并逻辑：
-        - api.yaml 提供基础参数（url/headers/body/prompter/return_format）
-        - agent.yaml 针对具体 agent 覆盖 body 中的 model/max_tokens 等
+        Reuses the merge logic from test_client.py:
+        - api.yaml provides base parameters (url/headers/body/prompter/return_format)
+        - agent.yaml overrides body fields such as model/max_tokens for the specific agent
         """
         agent_cfg_path = LLMAPI_DIR / "agent.yaml"
         api_cfg_path = LLMAPI_DIR / "api.yaml"
@@ -53,7 +53,7 @@ class SimpleHTTPChatAgent:
         base_params = api_cfg.get("parameters", {}) or {}
         agent_params = agent_cfg.get("parameters", {}) or {}
 
-        # 深度合并 body
+        # Deep-merge body
         body = dict(base_params.get("body", {}) or {})
         body.update(agent_params.get("body", {}) or {})
 
@@ -68,28 +68,29 @@ class SimpleHTTPChatAgent:
 
     def inference(self, history: List[Dict[str, Any]], tools: List[Dict[str, Any]] | None = None) -> Dict[str, Any]:
         """
-        单轮调用：给定完整 history（system+user+assistant...），返回一条 assistant 消息。
+        Single-turn call: given a full history (system+user+assistant...), returns one assistant message.
         """
         body: Dict[str, Any] = {
             **(self.base_body or {}),
             "messages": history,
         }
-        # 支持 function calling（tools）
+        # Support function calling (tools)
         if tools:
             body["tools"] = tools
             body["tool_choice"] = "auto"
 
-        # 简单串行重试逻辑：429/500/超时/网络错误一直重试；非可重试错误直接抛出
+        # Simple serial retry: 429/500/timeout/network errors retry indefinitely;
+        # non-retryable errors raise immediately.
         data: Dict[str, Any] | None = None
         attempt = 0
 
         while True:
             try:
-                # 单次请求超时设置为 250 秒，避免单个样本阻塞过久
+                # Per-request timeout of 250 seconds to avoid a single sample blocking too long
                 resp = requests.post(self.url, headers=self.headers, json=body, timeout=250)
-                # Too Many Requests / 500: 一直重试（线性递增，最大 60 秒）
+                # Too Many Requests / 500: retry with linear backoff (5s increments, max 60s)
                 if resp.status_code in (429, 500):
-                    # 线性递增：5 * (attempt + 1) 秒（5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 60, ...），最大 60 秒
+                    # Linear backoff: 5 * (attempt + 1) seconds (5, 10, 15, ..., 60, 60, ...), max 60s
                     wait_sec = min(5 * (attempt + 1), 60)
                     logging.warning(
                         f"LLM API HTTP {resp.status_code} (attempt {attempt + 1}), "
@@ -98,13 +99,12 @@ class SimpleHTTPChatAgent:
                     time.sleep(wait_sec)
                     attempt += 1
                     continue
-                # 对于其他 HTTP 错误（如 400 Bad Request），直接抛出
+                # For other HTTP errors (e.g. 400 Bad Request), raise immediately
                 resp.raise_for_status()
                 data = resp.json()
                 break
             except (ReadTimeout, Timeout) as e:
-                # 超时错误：一直重试（线性递增，最大 60 秒）
-                # 线性递增：5 * (attempt + 1) 秒（5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 60, ...），最大 60 秒
+                # Timeout: retry with linear backoff (5s increments, max 60s)
                 wait_sec = min(5 * (attempt + 1), 60)
                 logging.warning(
                     f"LLM API timeout (attempt {attempt + 1}), retrying after {wait_sec}s (linear backoff, max 60s)..."
@@ -113,8 +113,7 @@ class SimpleHTTPChatAgent:
                 attempt += 1
                 continue
             except requests.exceptions.RequestException as e:
-                # 其他网络错误（如连接错误）：一直重试（线性递增，最大 60 秒）
-                # 线性递增：5 * (attempt + 1) 秒（5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 60, ...），最大 60 秒
+                # Other network errors (e.g. connection errors): retry with linear backoff
                 wait_sec = min(5 * (attempt + 1), 60)
                 logging.warning(
                     f"LLM API network error (attempt {attempt + 1}): {str(e)}, retrying after {wait_sec}s (linear backoff, max 60s)..."
@@ -123,27 +122,26 @@ class SimpleHTTPChatAgent:
                 attempt += 1
                 continue
             except Exception as e:
-                # 其他错误（如 400 Bad Request）：不重试，直接抛出
+                # Other errors (e.g. 400 Bad Request): no retry, raise immediately
                 raise RuntimeError(
                     f"LLM API error {getattr(e, 'status_code', 'unknown')}: {str(e)}. "
                     f"Request snippet: {json.dumps(body)[:4000]}"
                 ) from e
 
-        # 如果成功跳出循环，data 一定不为 None（因为 break 前会赋值）
-        # 这个检查实际上永远不会执行，但保留作为防御性编程
+        # If we exit the loop normally, data is guaranteed non-None (assigned before break)
+        # This check is defensive programming and should never actually trigger
         if data is None:
             raise RuntimeError("LLM API call failed: no response data parsed (unexpected state)")
         choices = data.get("choices") or []
         if not choices:
             raise RuntimeError(f"Empty choices from LLM API: {data}")
         message = choices[0].get("message") or {}
-        # 确保至少有 role/content 字段
+        # Ensure at least role/content fields are present
         if "role" not in message:
             message["role"] = "assistant"
         if "content" not in message:
             message["content"] = ""
-        # 保存推理内容（如果存在）
+        # Preserve reasoning_content if present (returned as-is)
         if "reasoning_content" in message:
-            # reasoning_content 已经在 message 中，直接返回即可
             pass
         return message

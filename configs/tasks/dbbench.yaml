@@ -41,7 +41,7 @@ default:
       state_options:
         connection:
           host: 172.17.0.1
-          port: 7000  # 映射到 7000 避免 Windows 保留端口冲突
+          port: 7000
 
 dbbench-std:
   parameters:

@@ -70,27 +70,27 @@ services:
       context: ../data/os_interaction/res/dockerfiles
       dockerfile: default
     image: local-os/default:latest
-    command: /bin/true  # 立即退出，只用于构建镜像
+    command: /bin/true
     profiles:
-      - build-only  # 不会自动启动，只用于构建
+      - build-only
 
   local-os-packages:
     build:
       context: ../data/os_interaction/res/dockerfiles
       dockerfile: packages
     image: local-os/packages:latest
-    command: /bin/true  # 立即退出，只用于构建镜像
+    command: /bin/true
     profiles:
-      - build-only  # 不会自动启动，只用于构建
+      - build-only
 
   local-os-ubuntu:
     build:
       context: ../data/os_interaction/res/dockerfiles
       dockerfile: ubuntu
     image: local-os/ubuntu:latest
-    command: /bin/true  # 立即退出，只用于构建镜像
+    command: /bin/true
     profiles:
-      - build-only  # 不会自动启动，只用于构建
+      - build-only
 
   # webshop-std:
   #   build:
@@ -115,4 +115,4 @@ services:
     image: redis:7
     container_name: redis
     ports:
-      - "7000:6379"  # 映射到 7000 避免 Windows 保留端口冲突（6379/6380 在 6337-6436 范围内，7000 不在保留范围内）
+      - "7000:6379"

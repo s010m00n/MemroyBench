@@ -28,7 +28,7 @@ def build_schedule(
         return []
 
     if config.cross_task and not config.shuffle:
-        # 不支持 cross_task=True, shuffle=False 的情况
+        # cross_task=True with shuffle=False is not supported
         raise ValueError(
             "cross_task=True and shuffle=False is not supported. "
             "Please use either cross_task=False or shuffle=True."

@@ -1,5 +1,5 @@
 """
-调度工具模块 - 负责任务调度和 schedule 构建
+Schedule utilities module - handles task scheduling and schedule construction.
 """
 from __future__ import annotations
 
@@ -18,32 +18,32 @@ from src.server.tasks.locomo.task import (
 )
 
 
-# 特殊标记：用于表示 session 内容注入
+# Special marker: indicates a session content injection
 SESSION_INJECTION_MARKER = "__SESSION_INJECTION__"
-# 特殊标记：用于表示 replay 模式的测试样本
+# Special marker: indicates a replay-mode test sample
 REPLAY_TEST_MARKER = "__REPLAY_TEST__"
-# 特殊标记：用于表示 repair 模式的组标记
+# Special marker: indicates a repair-mode group marker
 REPAIR_GROUP_MARKER = "__REPAIR_GROUP__"
 
 def load_task_instance(task_name: str, exp_cfg: ExperimentConfig):
-    """根据 task_name 加载对应的 task 实例（用于 locomo 任务的特殊处理）"""
-    # 查找任务配置
+    """Load the task instance for the given task_name (for special locomo task handling)."""
+    # Find task config
     task_cfg = None
     for t in exp_cfg.tasks:
         if t.get("name") == task_name:
             task_cfg = t
             break
-    
+
     if not task_cfg:
         print(f"[load_task_instance] Task config not found for {task_name}")
         return None
-    
+
     config_path = task_cfg.get("config_path")
     if not config_path:
         print(f"[load_task_instance] config_path not found for {task_name}")
         return None
-    
-    # 加载 YAML 配置
+
+    # Load YAML config
     config_path = ROOT_DIR / config_path
     try:
         with open(config_path, 'r', encoding='utf-8') as f:
@@ -51,36 +51,36 @@ def load_task_instance(task_name: str, exp_cfg: ExperimentConfig):
     except Exception as e:
         print(f"[load_task_instance] Failed to load YAML from {config_path}: {e}")
         return None
-    
-    # 获取任务特定的配置（如果有）
-    # 先获取 default 配置作为基础
+
+    # Get task-specific config (if any)
+    # Use default config as the base
     default_cfg = task_yaml.get("default", {})
     task_specific_cfg = task_yaml.get(task_name, {})
-    
-    # 合并配置：default 作为基础，task_specific 覆盖
+
+    # Merge configs: default as base, task_specific overrides
     merged_cfg = default_cfg.copy() if default_cfg else {}
     if task_specific_cfg:
-        # 合并 parameters（如果存在）
+        # Merge parameters (if present)
         if "parameters" in task_specific_cfg:
             merged_params = merged_cfg.get("parameters", {}).copy() if merged_cfg.get("parameters") else {}
             merged_params.update(task_specific_cfg.get("parameters", {}))
             merged_cfg["parameters"] = merged_params
-        # 如果 task_specific 有 module，也覆盖
+        # Override module if task_specific has one
         if "module" in task_specific_cfg:
             merged_cfg["module"] = task_specific_cfg["module"]
-    
+
     if not merged_cfg:
         print(f"[load_task_instance] No config found for {task_name} in {config_path}")
         return None
-    
+
     module_path = merged_cfg.get("module", "")
     parameters = merged_cfg.get("parameters", {}) or {}
-    
+
     print(f"[load_task_instance] module_path={module_path}, parameters={parameters}")
-    
-    # 动态导入并实例化
+
+    # Dynamically import and instantiate
     try:
-        # 支持所有 locomo 任务（locomo-0 到 locomo-9）
+        # Support all locomo tasks (locomo-0 through locomo-9)
         task_classes = {
             "Locomo0Task": Locomo0Task, "Locomo1Task": Locomo1Task,
             "Locomo2Task": Locomo2Task, "Locomo3Task": Locomo3Task,
@@ -88,11 +88,11 @@ def load_task_instance(task_name: str, exp_cfg: ExperimentConfig):
             "Locomo6Task": Locomo6Task, "Locomo7Task": Locomo7Task,
             "Locomo8Task": Locomo8Task, "Locomo9Task": Locomo9Task
         }
-        
+
         for task_class_name, task_class in task_classes.items():
             if task_class_name in module_path:
                 return task_class(**parameters)
-        
+
         print(f"[load_task_instance] Unknown module_path: {module_path}")
         return None
     except Exception as e:
@@ -103,7 +103,7 @@ def load_task_instance(task_name: str, exp_cfg: ExperimentConfig):
 
 
 def is_locomo_task(task_name: str) -> bool:
-    """判断是否是 locomo 任务"""
+    """Return True if the task is a locomo task."""
     return task_name in tuple(f"locomo-{i}" for i in range(10))
 
 
@@ -114,36 +114,36 @@ def build_locomo_session_schedule(
     seed: int | None,
 ) -> Schedule:
     """
-    构建 locomo 任务的 session 顺序调度（用于 online 模式，cross_task=False）。
-    
-    按 session 顺序处理：先注入 session1 内容，然后处理 session1 的 QA（可选 shuffle），
-    再注入 session2 内容，处理 session2 的 QA，以此类推。
-    
+    Build a session-order schedule for the locomo task (used in online mode, cross_task=False).
+
+    Processes sessions in order: inject session1 content, then process session1 QAs
+    (optionally shuffled), then inject session2, process session2 QAs, and so on.
+
     Args:
-        locomo_task_name: locomo 任务名称
-        locomo_task_instance: locomo 任务实例
-        shuffle_enabled: 是否启用 shuffle（只影响每个 session 内的 QA 顺序）
-        seed: shuffle 的随机种子
-    
+        locomo_task_name: locomo task name
+        locomo_task_instance: locomo task instance
+        shuffle_enabled: whether to shuffle (affects only intra-session QA order)
+        seed: random seed for shuffling
+
     Returns:
-        调度序列，其中 session 内容注入使用特殊标记 (SESSION_INJECTION_MARKER, session_id)
+        schedule sequence where session injection uses special marker (SESSION_INJECTION_MARKER, session_id)
     """
     import random as rnd
-    
+
     rng = rnd.Random(seed)
-    
+
     schedule: Schedule = []
     session_ids = locomo_task_instance.session_ids
     print(f"[Locomo Session Schedule] Processing {len(session_ids)} sessions: {session_ids}")
-    
+
     for session_id in session_ids:
-        # 1. 插入 session 内容注入标记
+        # 1. Insert session injection marker
         schedule.append((SESSION_INJECTION_MARKER, session_id))
-        
-        # 2. 获取该 session 的所有 QA 索引
+
+        # 2. Get all QA indices for this session
         qa_indices = locomo_task_instance.get_qa_indices_for_session(session_id)
-        
-        # 3. 如果 shuffle=True，打乱该 session 内的 QA 顺序
+
+        # 3. If shuffle=True, shuffle QA order within this session
         if shuffle_enabled:
             qa_list = list(qa_indices)
             rng.shuffle(qa_list)
@@ -152,7 +152,7 @@ def build_locomo_session_schedule(
         else:
             schedule.extend([(locomo_task_name, qa_idx) for qa_idx in qa_indices])
             print(f"  -> Session {session_id}: {len(qa_indices)} QAs (original order)")
-    
+
     print(f"[Locomo Session Schedule] Total schedule length: {len(schedule)}")
     return schedule
 
@@ -165,52 +165,52 @@ def build_transfer_schedule(
     seed: int | None,
 ) -> Schedule:
     """
-    构建 transfer 模式的调度：先执行 transfer_task 的所有样本（训练），
-    再执行 transfer_after_task 的所有样本（测试）。
-    
+    Build a transfer-mode schedule: run all transfer_task samples first (training),
+    then all transfer_after_task samples (testing).
+
     Args:
-        task_to_indices: 任务到样本索引的映射
-        transfer_task: 训练任务名称（update+enhance）
-        transfer_after_task: 测试任务名称（仅 enhance）
-        shuffle_enabled: 是否启用 shuffle
-        seed: shuffle 的随机种子
-    
+        task_to_indices: mapping from task to sample indices
+        transfer_task: training task name (update+enhance)
+        transfer_after_task: test task name (enhance only)
+        shuffle_enabled: whether to shuffle
+        seed: random seed for shuffling
+
     Returns:
-        调度序列：先 transfer_task 的所有样本，再 transfer_after_task 的所有样本
+        schedule: transfer_task samples first, then transfer_after_task samples
     """
     import random as rnd
-    
+
     schedule: Schedule = []
-    
-    # 1. 先处理 transfer_task（训练任务）
+
+    # 1. Process transfer_task (training task) first
     if transfer_task not in task_to_indices:
         raise ValueError(f"transfer_task '{transfer_task}' not found in task_to_indices")
     transfer_indices = list(task_to_indices[transfer_task])
-    
+
     if shuffle_enabled:
         rng = rnd.Random(seed)
         rng.shuffle(transfer_indices)
         print(f"[Transfer Schedule] Shuffled {len(transfer_indices)} samples for transfer_task={transfer_task}")
     else:
         print(f"[Transfer Schedule] {len(transfer_indices)} samples for transfer_task={transfer_task} (no shuffle)")
-    
+
     schedule.extend([(transfer_task, idx) for idx in transfer_indices])
-    
-    # 2. 再处理 transfer_after_task（测试任务）
+
+    # 2. Process transfer_after_task (test task) second
     if transfer_after_task not in task_to_indices:
         raise ValueError(f"transfer_after_task '{transfer_after_task}' not found in task_to_indices")
     transfer_after_indices = list(task_to_indices[transfer_after_task])
-    
+
     if shuffle_enabled:
-        # 使用同一个 seed，但重新创建 RNG 以确保两个任务各自 shuffle
+        # Use the same seed but create a new RNG so each task shuffles independently
         rng = rnd.Random(seed)
         rng.shuffle(transfer_after_indices)
         print(f"[Transfer Schedule] Shuffled {len(transfer_after_indices)} samples for transfer_after_task={transfer_after_task}")
     else:
         print(f"[Transfer Schedule] {len(transfer_after_indices)} samples for transfer_after_task={transfer_after_task} (no shuffle)")
-    
+
     schedule.extend([(transfer_after_task, idx) for idx in transfer_after_indices])
-    
+
     print(f"[Transfer Schedule] Total schedule length: {len(schedule)} (train={len(transfer_indices)}, test={len(transfer_after_indices)})")
     return schedule
 
@@ -224,30 +224,31 @@ def build_replay_schedule(
     seed: int | None,
 ) -> Tuple[Schedule, Dict[int, Dict[str, List[SampleIndex]]]]:
     """
-    构建 replay 模式的调度：每 replay_m 个训练样本后，从已学过的所有样本中随机抽样 replay_n 个进行测试。
-    
+    Build a replay-mode schedule: after every replay_m training samples, randomly sample
+    replay_n samples from all learned samples for testing.
+
     Args:
-        task_to_indices: 任务到样本索引的映射（应该只有一个任务）
-        replay_m: 每学习 m 个样本后进行一次测试
-        replay_n: 每次测试时从已学过的样本中随机抽样 n 个
-        replay_seed: 测试样本随机抽样的种子
-        shuffle_enabled: 是否对训练样本进行 shuffle
-        seed: 训练样本 shuffle 的随机种子
-    
+        task_to_indices: task-to-indices mapping (must have exactly one task)
+        replay_m: number of training samples per replay interval
+        replay_n: number of samples to test per replay
+        replay_seed: random seed for test sample sampling
+        shuffle_enabled: whether to shuffle training samples
+        seed: random seed for training sample shuffling
+
     Returns:
-        (schedule, replay_info): 
-        - schedule: 调度序列：训练样本和测试样本交替出现
-        - replay_info: 每个 replay 批次的信息 {replay_id: {"train": [...], "test": [...]}}
+        (schedule, replay_info):
+        - schedule: alternating train and test samples
+        - replay_info: {replay_id: {"train": [...], "test": [...]}}
     """
     import random as rnd
-    
+
     if len(task_to_indices) != 1:
         raise ValueError(f"replay mode requires exactly 1 task, but got {len(task_to_indices)} tasks")
-    
+
     task_name = list(task_to_indices.keys())[0]
     all_indices = list(task_to_indices[task_name])
-    
-    # 1. 准备训练样本（如果 shuffle=True，则 shuffle）
+
+    # 1. Prepare training samples (shuffle if enabled)
     train_indices = list(all_indices)
     if shuffle_enabled:
         rng = rnd.Random(seed)
@@ -255,38 +256,38 @@ def build_replay_schedule(
         print(f"[Replay Schedule] Shuffled {len(train_indices)} training samples")
     else:
         print(f"[Replay Schedule] {len(train_indices)} training samples (no shuffle)")
-    
-    # 2. 构建调度：每 replay_m 个训练样本后，从已学过的样本中随机抽样 replay_n 个进行测试
+
+    # 2. Build schedule: after every replay_m train samples, sample replay_n test samples
     schedule: Schedule = []
-    test_rng = rnd.Random(replay_seed)  # 测试样本随机抽样使用 replay_seed
-    
-    learned_samples: List[SampleIndex] = []  # 已学过的样本
-    replay_info: Dict[int, Dict[str, List[SampleIndex]]] = {}  # 记录每个 replay 批次的信息
-    
+    test_rng = rnd.Random(replay_seed)  # Use replay_seed for test sample sampling
+
+    learned_samples: List[SampleIndex] = []  # All samples learned so far
+    replay_info: Dict[int, Dict[str, List[SampleIndex]]] = {}  # Info per replay batch
+
     replay_id = 1
     for i in range(0, len(train_indices), replay_m):
-        # 添加当前 batch 的训练样本
+        # Add current batch of training samples
         batch = train_indices[i:i + replay_m]
         schedule.extend([(task_name, idx) for idx in batch])
         learned_samples.extend(batch)
-        
-        # 从已学过的样本中随机抽样 replay_n 个进行测试
+
+        # Sample replay_n test samples from all learned samples
         if len(learned_samples) > 0:
-            # 如果已学过的样本少于 replay_n，则全部使用
+            # If fewer than replay_n samples learned, use all of them
             n_samples = min(replay_n, len(learned_samples))
             test_samples = test_rng.sample(learned_samples, n_samples)
-            # 使用特殊标记来标识测试样本
+            # Use special marker to identify test samples
             schedule.extend([(REPLAY_TEST_MARKER, idx) for idx in test_samples])
-            
-            # 记录当前 replay 批次的信息
+
+            # Record this replay batch's info
             replay_info[replay_id] = {
-                "train": learned_samples.copy(),  # 已学过的所有样本（到当前 replay 为止）
-                "test": test_samples.copy()  # 本次测试的样本
+                "train": learned_samples.copy(),  # All samples learned up to this replay
+                "test": test_samples.copy()        # Samples tested in this replay
             }
-            
+
             print(f"[Replay Schedule] Replay {replay_id}: {len(batch)} new train, {len(test_samples)} test (from {len(learned_samples)} learned)")
             replay_id += 1
-    
+
     print(f"[Replay Schedule] Total schedule length: {len(schedule)} (train={len(train_indices)}, {len(replay_info)} replays)")
     return schedule, replay_info
 
@@ -298,70 +299,69 @@ def build_replay_schedule_for_locomo(
     seed: int | None,
 ) -> Tuple[Schedule, Dict[int, Dict[str, List[SampleIndex]]]]:
     """
-    构建 locomo 任务的 replay 模式调度：按 session 划分，每个 session 作为一个 replay 批次。
-    
-    对于 locomo 任务，replay 模式按 session 划分：
-    - Replay 1: Session 1 的所有 QA（训练），然后 Session 1 的所有 QA（测试）
-    - Replay 2: Session 1 + Session 2 的所有 QA（训练），然后从 Session 1 + Session 2 的所有 QA 中抽样（测试）
+    Build a replay-mode schedule for locomo tasks: partition by session,
+    each session is one replay batch.
+
+    For locomo tasks, replay mode partitions by session:
+    - Replay 1: all QAs from session 1 (train), then all QAs from session 1 (test)
+    - Replay 2: all QAs from sessions 1+2 (train), then sample from sessions 1+2 (test)
     - ...
-    
+
     Args:
-        task_name: locomo 任务名称
-        locomo_task_instance: locomo 任务实例
-        shuffle_enabled: 是否对每个 session 内的 QA 进行 shuffle
-        seed: shuffle 的随机种子
-    
+        task_name: locomo task name
+        locomo_task_instance: locomo task instance
+        shuffle_enabled: whether to shuffle QAs within each session
+        seed: random seed for shuffling
+
     Returns:
-        (schedule, replay_info): 
-        - schedule: 调度序列：包含 session 注入标记和 QA 样本
-        - replay_info: 每个 replay 批次的信息 {replay_id: {"train": [...], "test": [...]}}
+        (schedule, replay_info):
+        - schedule: session injection markers + QA samples
+        - replay_info: {replay_id: {"train": [...], "test": [...]}}
     """
     import random as rnd
-    
+
     rng = rnd.Random(seed) if shuffle_enabled else None
-    
+
     schedule: Schedule = []
     replay_info: Dict[int, Dict[str, List[SampleIndex]]] = {}
-    
+
     session_ids = locomo_task_instance.session_ids
-    learned_samples: List[SampleIndex] = []  # 已学过的所有 QA 索引
-    
+    learned_samples: List[SampleIndex] = []  # All QA indices learned so far
+
     print(f"[Locomo Replay Schedule] Processing {len(session_ids)} sessions: {session_ids}")
-    
+
     replay_id = 1
     for session_id in session_ids:
-        # 1. 注入当前 session 的内容到 memory
+        # 1. Inject current session's content into memory
         schedule.append((SESSION_INJECTION_MARKER, session_id))
-        
-        # 2. 获取当前 session 的所有 QA 索引
+
+        # 2. Get all QA indices for this session
         session_qa_indices = locomo_task_instance.get_qa_indices_for_session(session_id)
-        
-        # 3. 如果 shuffle=True，打乱当前 session 内的 QA 顺序
+
+        # 3. If shuffle=True, shuffle QA order within this session
         if shuffle_enabled and rng:
             qa_list = list(session_qa_indices)
             rng.shuffle(qa_list)
             session_qa_indices = qa_list
-        
-        # 4. 添加当前 session 的 QA 作为训练样本
+
+        # 4. Add this session's QAs as training samples
         schedule.extend([(task_name, qa_idx) for qa_idx in session_qa_indices])
         learned_samples.extend(session_qa_indices)
-        
-        # 5. 从已学过的所有 QA 中抽样作为测试样本
-        # 注意：对于 locomo，虽然忽略 m、n 参数，但我们仍然需要从已学过的 QA 中抽样
-        # 这里我们使用当前 session 的所有 QA 作为测试样本（因为用户说"忽略 m、n 参数"）
-        # 如果用户希望从所有已学过的 QA 中抽样，可以修改这里
-        test_samples = session_qa_indices.copy()  # 使用当前 session 的所有 QA 作为测试样本
+
+        # 5. Sample test samples from all learned QAs
+        # For locomo, m/n parameters are ignored; use all QAs from the current session as test
+        test_samples = session_qa_indices.copy()
         schedule.extend([(REPLAY_TEST_MARKER, qa_idx) for qa_idx in test_samples])
-        
-        # 6. 记录当前 replay 批次的信息
+
+        # 6. Record this replay batch's info
         replay_info[replay_id] = {
-            "train": learned_samples.copy(),  # 已学过的所有 QA（到当前 session 为止）
-            "test": test_samples.copy()  # 当前 session 的所有 QA（作为测试样本）
+            "train": learned_samples.copy(),  # All QAs learned up to this session
+            "test": test_samples.copy()        # All QAs from the current session
         }
-        
+
         print(f"[Locomo Replay Schedule] Replay {replay_id} (Session {session_id}): {len(session_qa_indices)} train, {len(test_samples)} test (total learned: {len(learned_samples)})")
         replay_id += 1
-    
+
     print(f"[Locomo Replay Schedule] Total schedule length: {len(schedule)} ({len(replay_info)} replays)")
     return schedule, replay_info
 
@@ -374,41 +374,42 @@ def build_mixed_schedule(
     seed: int | None,
 ) -> Schedule:
     """
-    构建混合调度：先 shuffle system memory 任务，然后按 session 顺序插入 locomo 任务。
-    
+    Build a mixed schedule: shuffle system memory tasks first, then interleave
+    locomo tasks in session order.
+
     Args:
-        system_memory_tasks: system memory 任务的样本字典
-        locomo_task_name: locomo 任务名称
-        locomo_task_instance: locomo 任务实例
-        shuffle_enabled: 是否启用 shuffle
-        seed: shuffle 的随机种子
-    
+        system_memory_tasks: dict of system memory task samples
+        locomo_task_name: locomo task name
+        locomo_task_instance: locomo task instance
+        shuffle_enabled: whether to shuffle
+        seed: random seed for shuffling
+
     Returns:
-        混合后的调度序列，其中 session 内容注入使用特殊标记 (SESSION_INJECTION_MARKER, session_id)
+        mixed schedule where session injection uses special marker (SESSION_INJECTION_MARKER, session_id)
     """
     import random as rnd
-    
+
     rng = rnd.Random(seed)
-    
-    # 1. 先 shuffle system memory 任务的所有样本
+
+    # 1. Shuffle all system memory task samples
     system_memory_schedule: Schedule = []
     for task_name, indices in system_memory_tasks.items():
         for idx in indices:
             system_memory_schedule.append((task_name, idx))
-    
+
     if shuffle_enabled:
         rng.shuffle(system_memory_schedule)
-    
+
     print(f"[Mixed Schedule] Shuffled {len(system_memory_schedule)} system memory samples")
-    
-    # 2. 对于 locomo 任务，按 session 顺序处理
+
+    # 2. Process locomo task sessions in order
     if locomo_task_instance is None:
         return system_memory_schedule
-    
+
     session_ids = locomo_task_instance.session_ids
     print(f"[Mixed Schedule] Processing {len(session_ids)} locomo sessions: {session_ids}")
-    
-    # 3. 为每个 session 准备 QA 列表
+
+    # 3. Prepare QA lists for each session
     session_qa_map: Dict[int, List[SampleIndex]] = {}
     for session_id in session_ids:
         qa_indices = locomo_task_instance.get_qa_indices_for_session(session_id)
@@ -419,111 +420,109 @@ def build_mixed_schedule(
         else:
             session_qa_map[session_id] = list(qa_indices)
         print(f"  -> Session {session_id}: {len(session_qa_map[session_id])} QAs")
-    
-    # 4. 构建混合调度
-    # 策略：按 session 顺序，每个 session 的注入和所有 QA 必须在下一个 session 之前完成
-    # 每个 session 的内容分散在分配给它的 db 样本中
+
+    # 4. Build mixed schedule
+    # Strategy: sessions are processed in order; each session's injection and all its QAs
+    # must complete before the next session starts, with system samples interleaved
     mixed_schedule: Schedule = []
-    system_idx = 0  # system memory 样本的当前位置
-    
+    system_idx = 0  # Current position in system_memory_schedule
+
     for session_idx, session_id in enumerate(session_ids):
         qa_list = session_qa_map[session_id]
         if not qa_list:
             continue
-        
-        # 计算当前 session 可用的 db 样本范围
+
+        # Calculate available system samples for this session
         remaining_system = len(system_memory_schedule) - system_idx
         if remaining_system <= 0:
-            # 如果 db 样本已用完，直接插入该 session 的注入和所有 QA
+            # System samples exhausted: insert this session's injection and all QAs directly
             mixed_schedule.append((SESSION_INJECTION_MARKER, session_id))
             for qa_idx in qa_list:
                 mixed_schedule.append((locomo_task_name, qa_idx))
-            print(f"  -> Session {session_id}: injection + {len(qa_list)} QAs (no db samples remaining)")
+            print(f"  -> Session {session_id}: injection + {len(qa_list)} QAs (no system samples remaining)")
             continue
-        
-        # 计算该 session 应该使用多少 db 样本
-        # 为后续 session 保留样本（如果不是最后一个 session）
+
+        # Calculate how many system samples to allocate to this session
+        # Reserve samples for remaining sessions (if this is not the last session)
         is_last_session = (session_idx == len(session_ids) - 1)
         if is_last_session:
-            # 最后一个 session，使用所有剩余样本
+            # Last session: use all remaining samples
             session_db_count = remaining_system
         else:
-            # 不是最后一个 session，按比例分配
-            # 简单策略：平均分配剩余样本给所有后续 session（包括当前）
+            # Not last session: distribute remaining samples evenly
             remaining_sessions = len(session_ids) - session_idx
             session_db_count = remaining_system // remaining_sessions
-            session_db_count = max(1, session_db_count)  # 至少使用 1 个样本
-        
-        # 记录该 session 的 db 样本范围
+            session_db_count = max(1, session_db_count)  # Use at least 1 sample
+
+        # Record this session's system sample range
         session_start_idx = system_idx
         session_end_idx = min(system_idx + session_db_count, len(system_memory_schedule))
-        
-        # 4.1 在该 session 的 db 样本范围内，随机选择位置插入 session 注入
+
+        # 4.1 Choose a position within this session's range to insert the session injection
         if session_db_count > 1:
-            # 随机选择注入位置（在前 50% 的范围内，确保后面有足够空间放 QA）
+            # Pick a random injection position within the first 50% of the range
             injection_offset = rng.randint(0, max(1, session_db_count // 2))
             injection_pos = session_start_idx + injection_offset
         else:
             injection_pos = session_start_idx
-        
-        # 先添加 db 样本到注入位置
+
+        # Insert system samples up to the injection position
         while system_idx < injection_pos and system_idx < session_end_idx:
             mixed_schedule.append(system_memory_schedule[system_idx])
             system_idx += 1
-        
-        # 4.2 插入 session 内容注入标记
+
+        # 4.2 Insert session injection marker
         mixed_schedule.append((SESSION_INJECTION_MARKER, session_id))
         print(f"  -> Inserted session {session_id} injection at position {len(mixed_schedule) - 1}")
-        
-        # 4.3 将该 session 的所有 QA 分散插入到剩余的 db 样本中（在该 session 的范围内）
-        # 计算该 session 剩余的 db 样本数量（注入位置之后，到该 session 结束）
+
+        # 4.3 Distribute QAs within the remaining system samples for this session
         session_remaining_db = session_end_idx - system_idx
-        
+
         if session_remaining_db > 0 and len(qa_list) > 0:
-            # 计算每个 QA 之间的间隔
+            # Calculate intervals between QAs
             if len(qa_list) == 1:
                 intervals = [session_remaining_db]
             else:
-                # 将剩余的 db 样本分成 len(qa_list) 段
+                # Divide remaining system samples into len(qa_list) segments
                 base_interval = session_remaining_db // (len(qa_list) + 1)
                 intervals = []
                 remaining = session_remaining_db
                 for i in range(len(qa_list)):
                     if i == len(qa_list) - 1:
-                        # 最后一个 QA，使用所有剩余位置
+                        # Last QA: use all remaining positions
                         intervals.append(remaining)
                     else:
-                        # 随机选择间隔（在 base_interval 附近波动）
+                        # Random interval around base_interval
                         interval = base_interval + rng.randint(-base_interval // 2, base_interval // 2)
                         interval = max(1, min(interval, remaining - (len(qa_list) - i - 1)))
                         intervals.append(interval)
                         remaining -= interval
         else:
-            # 如果没有剩余的 db 样本，直接插入所有 QA
+            # No remaining system samples: insert all QAs directly
             intervals = [0] * len(qa_list)
-        
-        # 4.4 按间隔插入 QA（在该 session 的 db 样本范围内）
+
+        # 4.4 Insert QAs at the calculated intervals (within this session's system sample range)
         for qa_idx, interval in zip(qa_list, intervals):
-            # 先插入 db 样本
+            # Insert system samples first
             for _ in range(interval):
                 if system_idx < session_end_idx and system_idx < len(system_memory_schedule):
                     mixed_schedule.append(system_memory_schedule[system_idx])
                     system_idx += 1
-            # 再插入 QA
+            # Then insert QA
             mixed_schedule.append((locomo_task_name, qa_idx))
-        
-        print(f"  -> Inserted {len(qa_list)} QAs for session {session_id} (used {session_db_count} db samples, range: {session_start_idx}-{session_end_idx})")
-    
-    # 5. 添加剩余的 system memory 样本
+
+        print(f"  -> Inserted {len(qa_list)} QAs for session {session_id} (used {session_db_count} system samples, range: {session_start_idx}-{session_end_idx})")
+
+    # 5. Append any remaining system memory samples
     while system_idx < len(system_memory_schedule):
         mixed_schedule.append(system_memory_schedule[system_idx])
         system_idx += 1
-    
+
     print(f"[Mixed Schedule] Final schedule length: {len(mixed_schedule)}")
     print(f"  -> System memory samples: {len(system_memory_schedule)}")
     print(f"  -> Locomo session injections: {len(session_ids)}")
     print(f"  -> Locomo QAs: {sum(len(session_qa_map[sid]) for sid in session_ids)}")
-    
+
     return mixed_schedule
 
 
@@ -534,21 +533,22 @@ def build_offline_locomo_schedule(
     seed: int | None,
 ) -> Schedule:
     """
-    构建 offline 模式的 locomo 任务调度：一次性注入所有 session，然后处理所有 QA。
+    Build an offline-mode locomo task schedule: inject all sessions at once,
+    then process all QAs.
 
-    Offline 模式的特点：
-    - 在开头一次性注入所有 session 的内容（使用 SESSION_INJECTION_MARKER）
-    - 然后按顺序（或 shuffle）处理所有 QA
-    - 这样可以在 train/test 分割时，所有 session 的信息都已经注入到 memory 中
+    Offline mode characteristics:
+    - Inject all session content at the beginning (using SESSION_INJECTION_MARKER)
+    - Then process all QAs in order (or shuffled)
+    - This ensures all session information is in memory before train/test splitting
 
     Args:
-        locomo_task_name: locomo 任务名称
-        locomo_task_instance: locomo 任务实例
-        shuffle_enabled: 是否对 QA 进行 shuffle
-        seed: shuffle 的随机种子
+        locomo_task_name: locomo task name
+        locomo_task_instance: locomo task instance
+        shuffle_enabled: whether to shuffle QAs
+        seed: random seed for shuffling
 
     Returns:
-        调度序列：先注入所有 session，再处理所有 QA
+        schedule: all session injections first, then all QAs
     """
     import random as rnd
 
@@ -557,18 +557,18 @@ def build_offline_locomo_schedule(
 
     print(f"[Offline Locomo Schedule] Processing {len(session_ids)} sessions: {session_ids}")
 
-    # 1. 在开头一次性注入所有 session
+    # 1. Inject all sessions at the beginning
     for session_id in session_ids:
         schedule.append((SESSION_INJECTION_MARKER, session_id))
     print(f"[Offline Locomo Schedule] Added {len(session_ids)} session injection markers at the beginning")
 
-    # 2. 收集所有 QA 索引
+    # 2. Collect all QA indices
     all_qa_indices: List[SampleIndex] = []
     for session_id in session_ids:
         qa_indices = locomo_task_instance.get_qa_indices_for_session(session_id)
         all_qa_indices.extend(qa_indices)
 
-    # 3. 如果 shuffle=True，打乱所有 QA 的顺序
+    # 3. Shuffle all QAs if enabled
     if shuffle_enabled:
         rng = rnd.Random(seed)
         rng.shuffle(all_qa_indices)
@@ -576,7 +576,7 @@ def build_offline_locomo_schedule(
     else:
         print(f"[Offline Locomo Schedule] {len(all_qa_indices)} QAs (original order)")
 
-    # 4. 添加所有 QA 到 schedule
+    # 4. Append all QAs to the schedule
     for qa_idx in all_qa_indices:
         schedule.append((locomo_task_name, qa_idx))
 
@@ -593,33 +593,33 @@ def build_repair_schedule(
     seed: int | None,
 ) -> Tuple[Schedule, Dict[int, Dict[str, Any]]]:
     """
-    构建 repair 模式的调度：测试记忆系统处理知识冲突的能力。
+    Build a repair-mode schedule: tests the memory system's ability to handle knowledge conflicts.
 
-    Repair 模式的流程：
-    1. 将所有样本分成大小为 repair_m 的组（repair1, repair2, ...）
-    2. 在每个组内，随机选择 repair_n 个样本进行奖励反转
-    3. 每个组执行 4 个阶段：
-       - wrongJudgeFull: 学习全部 m 个样本（带错误奖励）
-       - wrongJudgeStandard: 只学习 n 个反转样本（带错误奖励）
-       - wrongJudgeTestFull: 测试全部 m 个样本（用正确奖励）
-       - wrongJudgeTestStandard: 测试 n 个反转样本（用正确奖励）
-       - rightJudgeFull: 重新学习全部 m 个样本（用正确奖励）
-       - rightJudgeStandard: 只学习 n 个反转样本（用正确奖励）
-       - rightJudgeTestFull: 测试全部 m 个样本（用正确奖励）
-       - rightJudgeTestStandard: 测试 n 个反转样本（用正确奖励）
+    Repair mode workflow:
+    1. Divide all samples into groups of size repair_m (repair1, repair2, ...)
+    2. Within each group, randomly select repair_n samples for reward reversal
+    3. Each group executes 4 phases:
+       - wrongJudgeFull: learn all m samples (with reversed rewards)
+       - wrongJudgeStandard: learn only n reversed samples (with reversed rewards)
+       - wrongJudgeTestFull: test all m samples (with correct rewards)
+       - wrongJudgeTestStandard: test n reversed samples (with correct rewards)
+       - rightJudgeFull: re-learn all m samples (with correct rewards)
+       - rightJudgeStandard: learn only n reversed samples (with correct rewards)
+       - rightJudgeTestFull: test all m samples (with correct rewards)
+       - rightJudgeTestStandard: test n reversed samples (with correct rewards)
 
     Args:
-        task_to_indices: 任务到样本索引的映射（应该只有一个任务）
-        repair_m: 每组的样本数量
-        repair_n: 每组中需要反转奖励的样本数量
-        repair_seed: 选择反转样本的随机种子
-        shuffle_enabled: 是否对所有样本进行 shuffle（在分组之前）
-        seed: shuffle 的随机种子
+        task_to_indices: task-to-indices mapping (must have exactly one task)
+        repair_m: samples per group
+        repair_n: number of samples to reverse per group
+        repair_seed: random seed for selecting reversed samples
+        shuffle_enabled: whether to shuffle all samples before grouping
+        seed: random seed for shuffling
 
     Returns:
         (schedule, repair_info):
-        - schedule: 调度序列，包含 repair 组标记和样本
-        - repair_info: 每个 repair 组的信息 {repair_id: {"all_samples": [...], "reversed_samples": [...]}}
+        - schedule: repair group markers and samples
+        - repair_info: {repair_id: {"all_samples": [...], "reversed_samples": [...]}}
     """
     import random as rnd
 
@@ -629,7 +629,7 @@ def build_repair_schedule(
     task_name = list(task_to_indices.keys())[0]
     all_indices = list(task_to_indices[task_name])
 
-    # 1. 准备所有样本（如果 shuffle=True，则 shuffle）
+    # 1. Prepare all samples (shuffle if enabled)
     all_samples = list(all_indices)
     if shuffle_enabled:
         rng = rnd.Random(seed)
@@ -638,7 +638,7 @@ def build_repair_schedule(
     else:
         print(f"[Repair Schedule] {len(all_samples)} samples (no shuffle before grouping)")
 
-    # 2. 分组：每组 repair_m 个样本
+    # 2. Group samples: repair_m per group
     repair_groups: List[List[SampleIndex]] = []
     for i in range(0, len(all_samples), repair_m):
         group = all_samples[i:i + repair_m]
@@ -646,24 +646,24 @@ def build_repair_schedule(
 
     print(f"[Repair Schedule] Created {len(repair_groups)} repair groups (m={repair_m})")
 
-    # 3. 为每个组随机选择 repair_n 个样本进行奖励反转
+    # 3. For each group, randomly select repair_n samples for reward reversal
     repair_rng = rnd.Random(repair_seed)
     repair_info: Dict[int, Dict[str, Any]] = {}
 
     schedule: Schedule = []
 
     for repair_id, group_samples in enumerate(repair_groups, start=1):
-        # 从当前组中随机选择 n 个样本进行奖励反转
+        # Randomly select n samples for reversal from this group
         n_to_reverse = min(repair_n, len(group_samples))
         reversed_samples = repair_rng.sample(group_samples, n_to_reverse)
 
-        # 记录该 repair 组的信息
+        # Record this repair group's info
         repair_info[repair_id] = {
             "all_samples": group_samples.copy(),
             "reversed_samples": reversed_samples.copy()
         }
 
-        # 添加 repair 组标记到 schedule（用于在 main 中识别组边界）
+        # Add repair group marker to schedule (for identifying group boundaries in main)
         schedule.append((REPAIR_GROUP_MARKER, repair_id))
 
         print(f"[Repair Schedule] Repair {repair_id}: {len(group_samples)} samples total, {n_to_reverse} reversed")
@@ -681,35 +681,36 @@ def build_repair_schedule_for_locomo(
     seed: int | None,
 ) -> Tuple[Schedule, Dict[int, Dict[str, Any]]]:
     """
-    构建 locomo 任务的 repair 模式调度：按 session 划分，测试记忆系统处理知识冲突的能力。
+    Build a repair-mode schedule for locomo tasks: partition by session,
+    tests the memory system's ability to handle knowledge conflicts.
 
-    对于 locomo 任务，repair 模式按 session 划分（忽略 repair_m 参数）：
-    - Repair 1 = Session 1：随机选择 repair_size_locomo * session_qa_count 个 QA 进行奖励反转
-    - Repair 2 = Session 2：随机选择 repair_size_locomo * session_qa_count 个 QA 进行奖励反转
+    For locomo tasks, repair mode partitions by session (repair_m is ignored):
+    - Repair 1 = Session 1: randomly select repair_size_locomo * session_qa_count QAs for reversal
+    - Repair 2 = Session 2: randomly select repair_size_locomo * session_qa_count QAs for reversal
     - ...
 
-    每个 session（repair 组）执行 4 个阶段（与系统记忆任务相同）：
-    - wrongJudgeFull: 注入 session + 学习全部 QA（带错误奖励）
-    - wrongJudgeStandard: 只学习反转的 QA（带错误奖励）
-    - wrongJudgeTestFull: 测试全部 QA（用正确奖励）
-    - wrongJudgeTestStandard: 测试反转的 QA（用正确奖励）
-    - rightJudgeFull: 重新学习全部 QA（用正确奖励）
-    - rightJudgeStandard: 只学习反转的 QA（用正确奖励）
-    - rightJudgeTestFull: 测试全部 QA（用正确奖励）
-    - rightJudgeTestStandard: 测试反转的 QA（用正确奖励）
+    Each session (repair group) executes 4 phases (same as system memory tasks):
+    - wrongJudgeFull: inject session + learn all QAs (with reversed rewards)
+    - wrongJudgeStandard: learn only reversed QAs (with reversed rewards)
+    - wrongJudgeTestFull: test all QAs (with correct rewards)
+    - wrongJudgeTestStandard: test reversed QAs (with correct rewards)
+    - rightJudgeFull: re-learn all QAs (with correct rewards)
+    - rightJudgeStandard: learn only reversed QAs (with correct rewards)
+    - rightJudgeTestFull: test all QAs (with correct rewards)
+    - rightJudgeTestStandard: test reversed QAs (with correct rewards)
 
     Args:
-        task_name: locomo 任务名称
-        locomo_task_instance: locomo 任务实例
-        repair_size_locomo: 每个 session 中需要反转奖励的 QA 比例（0-1之间，如 0.5 表示反转 50%）
-        repair_seed: 选择反转 QA 的随机种子
-        shuffle_enabled: 是否对每个 session 内的 QA 进行 shuffle
-        seed: shuffle 的随机种子
+        task_name: locomo task name
+        locomo_task_instance: locomo task instance
+        repair_size_locomo: fraction of QAs per session to reverse (0-1, e.g. 0.5 = 50%)
+        repair_seed: random seed for selecting reversed QAs
+        shuffle_enabled: whether to shuffle QAs within each session
+        seed: random seed for shuffling
 
     Returns:
         (schedule, repair_info):
-        - schedule: 调度序列，包含 session 注入标记和 repair 组标记
-        - repair_info: 每个 repair 组（session）的信息 {repair_id: {"session_id": ..., "all_qa": [...], "reversed_qa": [...]}}
+        - schedule: session injection markers + repair group markers
+        - repair_info: {repair_id: {"session_id": ..., "all_qa": [...], "reversed_qa": [...]}}
     """
     import random as rnd
 
@@ -724,30 +725,30 @@ def build_repair_schedule_for_locomo(
 
     repair_id = 1
     for session_id in session_ids:
-        # 1. 获取当前 session 的所有 QA 索引
+        # 1. Get all QA indices for this session
         session_qa_indices = locomo_task_instance.get_qa_indices_for_session(session_id)
 
-        # 2. 如果 shuffle=True，打乱当前 session 内的 QA 顺序
+        # 2. If shuffle=True, shuffle QA order within this session
         if shuffle_enabled and rng:
             qa_list = list(session_qa_indices)
             rng.shuffle(qa_list)
             session_qa_indices = qa_list
 
-        # 3. 从当前 session 的 QA 中根据 repair_size_locomo 比例选择需要反转的 QA
-        n_to_reverse = max(1, int(len(session_qa_indices) * repair_size_locomo))  # 至少反转1个
+        # 3. Select QAs to reverse based on repair_size_locomo ratio
+        n_to_reverse = max(1, int(len(session_qa_indices) * repair_size_locomo))  # Reverse at least 1
         reversed_qa = repair_rng.sample(session_qa_indices, n_to_reverse)
 
-        # 4. 记录该 repair 组（session）的信息
+        # 4. Record this repair group (session)'s info
         repair_info[repair_id] = {
             "session_id": session_id,
             "all_qa": list(session_qa_indices),
             "reversed_qa": reversed_qa.copy()
         }
 
-        # 5. 添加 session 注入标记（在 wrongJudgeFull 阶段需要）
+        # 5. Add session injection marker (needed for wrongJudgeFull phase)
         schedule.append((SESSION_INJECTION_MARKER, session_id))
 
-        # 6. 添加 repair 组标记
+        # 6. Add repair group marker
         schedule.append((REPAIR_GROUP_MARKER, repair_id))
 
         print(f"[Locomo Repair Schedule] Repair {repair_id} (Session {session_id}): {len(session_qa_indices)} QAs total, {n_to_reverse} reversed ({repair_size_locomo*100:.0f}%)")
@@ -755,5 +756,3 @@ def build_repair_schedule_for_locomo(
 
     print(f"[Locomo Repair Schedule] Total repair groups: {len(session_ids)}")
     return schedule, repair_info
-
-

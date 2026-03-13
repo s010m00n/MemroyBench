@@ -1,5 +1,5 @@
 """
-构建器模块 - 负责构建 memory、execution engine 等组件
+Builders module - constructs memory mechanisms, execution engines, and other components.
 """
 from __future__ import annotations
 
@@ -14,17 +14,17 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 
 def build_memory_from_config(cfg: ExperimentConfig):
     """
-    根据 default.yaml 中的 memory_mechanism 构造记忆机制。
+    Construct the memory mechanism from the memory_mechanism section of default.yaml.
 
-    支持的记忆机制（统一使用 snake_case 命名）：
-    - zero_shot: 无记忆基线
-    - stream_icl: 流式 In-Context Learning
-    - mem0: Mem0 记忆系统
+    Supported memory mechanisms (all using snake_case names):
+    - zero_shot: no-memory baseline
+    - stream_icl: streaming In-Context Learning
+    - mem0: Mem0 memory system
     - mems: Multi-Memory System (MEMs)
     - awm_pro: Agent Workflow Memory Pro
 
-    注意：无论配置什么 memory_mechanism，都会返回对应的实例用于 update_memory。
-    但在 offline 模式下，use_memory 会强制使用 zero_shot（见 main 函数）。
+    Note: regardless of the configured memory_mechanism, the returned instance is used
+    for update_memory. In offline mode, use_memory is forced to zero_shot (see main).
     """
     from memory.registry import get_memory_loader, list_available_memories
 
@@ -35,14 +35,14 @@ def build_memory_from_config(cfg: ExperimentConfig):
     try:
         loader_func, default_config_path = get_memory_loader(name)
     except ValueError as e:
-        # 提供友好的错误信息
+        # Provide a friendly error message
         available = list_available_memories()
         raise ValueError(
             f"Unknown memory mechanism '{name}'. "
             f"Available options: {', '.join(available)}"
         ) from e
 
-    # 确定配置文件路径
+    # Determine the config file path
     if not config_path:
         config_path = ROOT_DIR / default_config_path
     else:
@@ -53,8 +53,8 @@ def build_memory_from_config(cfg: ExperimentConfig):
 
 def build_execution_engine_from_config(cfg: ExperimentConfig):
     """
-    根据 assignment.yaml 中的 execution_method 构造执行引擎。
-    支持 single_agent。
+    Construct the execution engine from the execution_method section of assignment.yaml.
+    Supports single_agent.
     """
     exec_cfg = cfg.execution_method or {}
     name = exec_cfg.get("name", "single_agent")
@@ -71,7 +71,7 @@ def build_execution_engine_from_config(cfg: ExperimentConfig):
 
 
 def ensure_output_dir(base: Path) -> Path:
-    """确保输出目录存在"""
+    """Ensure the output directory exists."""
     base.mkdir(parents=True, exist_ok=True)
     return base
 
@@ -83,31 +83,31 @@ def build_schedule_from_config(
     locomo_task_name=None
 ):
     """
-    统一的调度构建入口，返回完整的调度信息。
+    Unified schedule-building entry point. Returns complete scheduling information.
 
-    这个函数实现了清晰的调度构建流水线：
-    1. 构建任务索引 (build_indices)
-    2. 构建基础调度 (build_base_schedule)
-    3. 如果是 offline，分割 train/test (split_train_test_if_needed)
+    Implements a clear pipeline:
+    1. Build task indices (build_indices)
+    2. Build base schedule (build_base_schedule)
+    3. If offline, split into train/test (split_train_test_if_needed)
 
     Args:
-        exp_cfg: 实验配置
-        backend: 后端客户端
-        locomo_task_instance: locomo 任务实例（可选）
-        locomo_task_name: locomo 任务名称（可选）
+        exp_cfg: experiment configuration
+        backend: backend client
+        locomo_task_instance: locomo task instance (optional)
+        locomo_task_name: locomo task name (optional)
 
     Returns:
         {
-            "train_schedule": [...],      # 训练集调度
-            "test_schedule": [...],       # 测试集调度（offline 模式）或 None
-            "task_to_indices": {...},     # 任务索引映射
-            "replay_info": {...},         # replay 信息（replay 模式）或 None
+            "train_schedule": [...],      # training schedule
+            "test_schedule": [...],       # test schedule (offline mode) or None
+            "task_to_indices": {...},     # task index mapping
+            "replay_info": {...},         # replay info (replay mode) or None
         }
     """
-    # 步骤 1: 构建任务索引
+    # Step 1: Build task indices
     task_to_indices = _build_task_indices(exp_cfg, backend, locomo_task_instance, locomo_task_name)
 
-    # 步骤 2: 构建基础调度
+    # Step 2: Build base schedule
     base_schedule, replay_info = _build_base_schedule(
         exp_cfg=exp_cfg,
         task_to_indices=task_to_indices,
@@ -115,7 +115,7 @@ def build_schedule_from_config(
         locomo_task_name=locomo_task_name,
     )
 
-    # 步骤 3: 如果是 offline，分割 train/test
+    # Step 3: If offline, split into train/test
     training_mode = exp_cfg.experiment.get("training_mode", "offline")
     if training_mode == "offline":
         train_schedule, test_schedule = _split_train_test(
@@ -135,13 +135,13 @@ def build_schedule_from_config(
 
 def _build_task_indices(exp_cfg: ExperimentConfig, backend, locomo_task_instance=None, locomo_task_name=None) -> dict:
     """
-    步骤 1: 构建任务索引映射
+    Step 1: Build the task-to-indices mapping.
 
     Args:
-        exp_cfg: 实验配置
-        backend: 后端客户端
-        locomo_task_instance: locomo 任务实例（可选）
-        locomo_task_name: locomo 任务名称（可选）
+        exp_cfg: experiment configuration
+        backend: backend client
+        locomo_task_instance: locomo task instance (optional)
+        locomo_task_name: locomo task name (optional)
 
     Returns:
         {task_name: [sample_indices]}
@@ -153,14 +153,14 @@ def _build_task_indices(exp_cfg: ExperimentConfig, backend, locomo_task_instance
 
     task_to_indices = {}
     for task_name in task_names:
-        # 对于 locomo 任务，从任务实例中获取 QA 索引
+        # For locomo tasks, get QA indices from the task instance
         if is_locomo_task(task_name) and locomo_task_instance is not None and task_name == locomo_task_name:
-            # Locomo 任务：索引是 QA 列表的索引
+            # Locomo task: indices are indices into the QA list
             indices = list(range(len(locomo_task_instance.qa_list)))
             task_to_indices[task_name] = indices
             print(f"[Locomo Task] {task_name}: {len(indices)} QA samples")
         else:
-            # 普通任务：从 backend 获取索引
+            # Regular task: get indices from backend
             try:
                 indices = backend.get_indices(task_name)
                 task_to_indices[task_name] = indices
@@ -178,16 +178,16 @@ def _build_base_schedule(
     locomo_task_name: str | None,
 ):
     """
-    步骤 2: 根据训练模式构建基础调度
+    Step 2: Build the base schedule based on training mode.
 
     Args:
-        exp_cfg: 实验配置
-        task_to_indices: 任务索引映射
-        locomo_task_instance: locomo 任务实例
-        locomo_task_name: locomo 任务名称
+        exp_cfg: experiment configuration
+        task_to_indices: task index mapping
+        locomo_task_instance: locomo task instance
+        locomo_task_name: locomo task name
 
     Returns:
-        (schedule, replay_info) 元组
+        (schedule, replay_info) tuple
     """
     from src.runner.schedule_utils import (
         build_transfer_schedule,
@@ -201,7 +201,7 @@ def _build_base_schedule(
     )
     from src.client.scheduler import build_schedule, ScheduleConfig
 
-    # 获取配置
+    # Read config values
     training_mode = exp_cfg.experiment.get("training_mode", "offline")
     cross_task = exp_cfg.experiment.get("cross_task", False)
     shuffle_cfg = exp_cfg.experiment.get("shuffle", {})
@@ -210,15 +210,15 @@ def _build_base_schedule(
 
     replay_info = None
 
-    # 根据 training_mode 构建不同的调度
+    # Build schedule based on training_mode
     if training_mode == "transfer":
-        # Transfer 模式：先训练 transfer_task，再测试 transfer_after_task
+        # Transfer mode: train on transfer_task first, then test on transfer_after_task
         transfer_task = exp_cfg.experiment.get("transfer_task")
         transfer_after_task = exp_cfg.experiment.get("transfer_after_task")
 
-        # 检查是否是 locomo 任务的前向迁移
+        # Check if this is a forward-transfer for a locomo task
         if transfer_task == transfer_after_task and locomo_task_name and locomo_task_instance:
-            # 前向迁移 + locomo 任务：使用 session 调度
+            # Forward transfer + locomo task: use session schedule
             schedule = build_locomo_session_schedule(
                 locomo_task_name=locomo_task_name,
                 locomo_task_instance=locomo_task_instance,
@@ -226,7 +226,7 @@ def _build_base_schedule(
                 seed=seed,
             )
         else:
-            # 跨任务迁移 或 非 locomo 任务：使用默认 transfer 调度
+            # Cross-task transfer or non-locomo task: use default transfer schedule
             schedule = build_transfer_schedule(
                 task_to_indices=task_to_indices,
                 transfer_task=transfer_task,
@@ -236,9 +236,9 @@ def _build_base_schedule(
             )
 
     elif training_mode == "replay":
-        # Replay 模式：周期性测试已学知识
+        # Replay mode: periodically test already-learned knowledge
         if locomo_task_name:
-            # Locomo 任务的 replay：按 session 划分
+            # Locomo task replay: partition by session
             schedule, replay_info = build_replay_schedule_for_locomo(
                 task_name=locomo_task_name,
                 locomo_task_instance=locomo_task_instance,
@@ -246,7 +246,7 @@ def _build_base_schedule(
                 seed=seed,
             )
         else:
-            # 普通任务的 replay：按 m/n 参数划分
+            # Regular task replay: partition by m/n parameters
             replay_m = exp_cfg.experiment.get("replay_m")
             replay_n = exp_cfg.experiment.get("replay_n")
             replay_seed = exp_cfg.experiment.get("replay_seed")
@@ -260,9 +260,9 @@ def _build_base_schedule(
             )
 
     elif training_mode == "repair":
-        # Repair 模式：测试记忆系统处理知识冲突的能力
+        # Repair mode: test memory system's ability to handle knowledge conflicts
         if locomo_task_name:
-            # Locomo 任务的 repair：按 session 划分（使用 repair_size_locomo）
+            # Locomo task repair: partition by session (uses repair_size_locomo)
             repair_size_locomo = exp_cfg.experiment.get("repair_size_locomo")
             repair_seed = exp_cfg.experiment.get("repair_seed")
             schedule, replay_info = build_repair_schedule_for_locomo(
@@ -274,7 +274,7 @@ def _build_base_schedule(
                 seed=seed,
             )
         else:
-            # 普通任务的 repair：按 m/n 参数划分
+            # Regular task repair: partition by m/n parameters
             repair_m = exp_cfg.experiment.get("repair_m")
             repair_n = exp_cfg.experiment.get("repair_n")
             repair_seed = exp_cfg.experiment.get("repair_seed")
@@ -288,7 +288,7 @@ def _build_base_schedule(
             )
 
     elif training_mode == "offline" and locomo_task_name and locomo_task_instance:
-        # Offline 模式 + Locomo 任务：一次性注入所有 session，然后处理所有 QA
+        # Offline mode + locomo task: inject all sessions at once, then process all QAs
         schedule = build_offline_locomo_schedule(
             locomo_task_name=locomo_task_name,
             locomo_task_instance=locomo_task_instance,
@@ -297,10 +297,10 @@ def _build_base_schedule(
         )
 
     elif training_mode == "online" and locomo_task_name and locomo_task_instance:
-        # Online 模式 + Locomo 任务
+        # Online mode + locomo task
         system_memory_tasks = {k: v for k, v in task_to_indices.items() if k != locomo_task_name}
         if system_memory_tasks:
-            # 有其他任务，使用混合调度
+            # Has other tasks: use mixed schedule
             schedule = build_mixed_schedule(
                 system_memory_tasks=system_memory_tasks,
                 locomo_task_name=locomo_task_name,
@@ -309,7 +309,7 @@ def _build_base_schedule(
                 seed=seed,
             )
         else:
-            # 只有 locomo 任务，使用 session 调度
+            # Only locomo task: use session schedule
             schedule = build_locomo_session_schedule(
                 locomo_task_name=locomo_task_name,
                 locomo_task_instance=locomo_task_instance,
@@ -318,7 +318,7 @@ def _build_base_schedule(
             )
 
     else:
-        # 默认：使用 scheduler 的 build_schedule（适用于普通 system memory 任务）
+        # Default: use scheduler's build_schedule (for regular system memory tasks)
         schedule_cfg = ScheduleConfig(
             cross_task=cross_task,
             shuffle=shuffle_enabled,
@@ -331,30 +331,30 @@ def _build_base_schedule(
 
 def _split_train_test(schedule, exp_cfg: ExperimentConfig, locomo_task_instance=None):
     """
-    步骤 3: 如果是 offline 模式，分割 train/test
+    Step 3: If in offline mode, split the schedule into train/test.
 
-    对于 locomo 任务：
-    - 训练集 = 所有 session injection markers（用于注入上下文到记忆）
-    - 测试集 = 所有 QA（用于测试记忆检索效果）
-    - 忽略 train_size 参数
+    For locomo tasks:
+    - train set = all session injection markers (for injecting context into memory)
+    - test set = all QAs (for testing memory retrieval)
+    - train_size parameter is ignored
 
-    对于普通任务：
-    - 按 train_size 比例分割
+    For regular tasks:
+    - split by train_size ratio
 
     Args:
-        schedule: 基础调度序列
-        exp_cfg: 实验配置
-        locomo_task_instance: locomo 任务实例（可选）
+        schedule: base schedule sequence
+        exp_cfg: experiment configuration
+        locomo_task_instance: locomo task instance (optional)
 
     Returns:
-        (train_schedule, test_schedule) 元组
+        (train_schedule, test_schedule) tuple
     """
     from src.runner.schedule_utils import SESSION_INJECTION_MARKER
 
-    # 检查是否是 locomo offline 模式
+    # Check if this is a locomo offline scenario
     if locomo_task_instance is not None:
-        # Locomo 模式：train = sessions, test = all QAs
-        # 分割点 = session 的数量
+        # Locomo mode: train = sessions, test = all QAs
+        # Split point = number of sessions
         split_point = len(locomo_task_instance.session_ids)
         train_schedule = schedule[:split_point]
         test_schedule = schedule[split_point:]
@@ -364,7 +364,7 @@ def _split_train_test(schedule, exp_cfg: ExperimentConfig, locomo_task_instance=
         print(f"  - Test: {len(test_schedule)} QAs")
         print(f"  - train_size parameter is IGNORED for locomo tasks")
     else:
-        # 普通任务：按 train_size 比例分割
+        # Regular task: split by train_size ratio
         train_size = exp_cfg.experiment.get("train_size", 0.8)
         split_point = int(len(schedule) * train_size)
         train_schedule = schedule[:split_point]

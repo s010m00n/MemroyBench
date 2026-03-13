@@ -1,9 +1,9 @@
 """
-Memory Mechanism Registry - 统一管理所有记忆机制的注册和加载
+Memory Mechanism Registry - centralized management for registering and loading all memory mechanisms
 
-统一命名规范：
-- 配置中使用 snake_case 命名（如 stream_icl, awm_pro, mems）
-- 通过 registry 映射到实际的类和加载函数
+Naming convention:
+- Use snake_case in configuration (e.g. stream_icl, awm_pro, mems)
+- The registry maps these names to their actual classes and loader functions
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from typing import Callable, Dict, Any
 from memory.base import MemoryMechanism
 
 
-# 记忆机制注册表：name -> (loader_function, default_config_path)
+# Registry: name -> (loader_function, default_config_path)
 _MEMORY_REGISTRY: Dict[str, tuple[Callable[[str], MemoryMechanism], str]] = {}
 
 
@@ -23,28 +23,28 @@ def register_memory(
     default_config_path: str,
 ) -> None:
     """
-    注册一个记忆机制
+    Register a memory mechanism.
 
     Args:
-        name: 记忆机制名称（统一使用 snake_case，如 stream_icl, awm_pro）
-        loader_func: 加载函数，接收 config_path 返回 MemoryMechanism 实例
-        default_config_path: 默认配置文件路径（相对于项目根目录）
+        name: mechanism name in snake_case (e.g. stream_icl, awm_pro)
+        loader_func: loader function that accepts a config_path and returns a MemoryMechanism instance
+        default_config_path: default config file path relative to the project root
     """
     _MEMORY_REGISTRY[name] = (loader_func, default_config_path)
 
 
 def get_memory_loader(name: str) -> tuple[Callable[[str], MemoryMechanism], str]:
     """
-    获取记忆机制的加载函数和默认配置路径
+    Get the loader function and default config path for a memory mechanism.
 
     Args:
-        name: 记忆机制名称
+        name: mechanism name
 
     Returns:
         (loader_func, default_config_path)
 
     Raises:
-        ValueError: 如果记忆机制未注册
+        ValueError: if the mechanism is not registered
     """
     if name not in _MEMORY_REGISTRY:
         available = ", ".join(sorted(_MEMORY_REGISTRY.keys()))
@@ -56,14 +56,14 @@ def get_memory_loader(name: str) -> tuple[Callable[[str], MemoryMechanism], str]
 
 
 def list_available_memories() -> list[str]:
-    """返回所有已注册的记忆机制名称"""
+    """Return names of all registered memory mechanisms."""
     return sorted(_MEMORY_REGISTRY.keys())
 
 
-# ===== 注册所有记忆机制 =====
+# ===== Register all memory mechanisms =====
 
 def _register_all_memories():
-    """注册所有内置的记忆机制"""
+    """Register all built-in memory mechanisms."""
 
     # zero_shot
     from memory.zero_shot.zero_shot import load_zero_shot_from_yaml
@@ -73,7 +73,7 @@ def _register_all_memories():
         default_config_path="memory/zero_shot/zero_shot.yaml",
     )
 
-    # stream_icl (统一使用 snake_case)
+    # stream_icl (snake_case)
     from memory.streamICL.streamICL import load_stream_icl_from_yaml
     register_memory(
         name="stream_icl",
@@ -89,7 +89,7 @@ def _register_all_memories():
         default_config_path="memory/mem0/mem0.yaml",
     )
 
-    # mems (统一使用小写)
+    # mems (lowercase)
     from memory.MEMs import load_mems_from_yaml
     register_memory(
         name="mems",
@@ -97,7 +97,7 @@ def _register_all_memories():
         default_config_path="memory/MEMs/MEMs.yaml",
     )
 
-    # awm_pro (统一使用 snake_case)
+    # awm_pro (snake_case)
     from memory.awmPro.awmPro import load_awmpro_from_yaml
     register_memory(
         name="awm_pro",
@@ -106,5 +106,5 @@ def _register_all_memories():
     )
 
 
-# 自动注册所有记忆机制
+# Auto-register all memory mechanisms on import
 _register_all_memories()

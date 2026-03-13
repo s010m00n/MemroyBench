@@ -5,13 +5,13 @@ from typing import Protocol, List, Dict, Any, Tuple
 
 class ExecutionEngine(Protocol):
     """
-    抽象的执行引擎接口。
+    Abstract interface for execution engines.
 
-    负责在「已经构造好的 messages + tools」基础上：
-    - 选择合适的 agent（single / multi-agent）
-    - 调用 LLM
-    - 与 backend 进行多轮 /interact 交互
-    - 返回完整的 history 和最终 result（reward / status / metric 等）
+    Responsible for, given already-constructed messages + tools:
+    - Selecting the appropriate agent (single / multi-agent)
+    - Calling the LLM
+    - Conducting multi-turn /interact exchanges with the backend
+    - Returning the complete history and final result (reward / status / metric, etc.)
     """
 
     def run_sample(
@@ -25,11 +25,11 @@ class ExecutionEngine(Protocol):
         backend_client: Any,
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """
-        执行一条样本的完整交互流程。
+        Execute the complete interaction flow for one sample.
 
-        返回值：
-        - history: OpenAI Chat 格式的完整对话轨迹（system/user/assistant/tool/...）
-        - result: 由 backend 返回或汇总的最终结果（reward/status/metric 等）
+        Returns:
+        - history: full conversation trajectory in OpenAI Chat format (system/user/assistant/tool/...)
+        - result: final result returned or aggregated by the backend (reward/status/metric, etc.)
         """
 
 

@@ -1,14 +1,14 @@
 """
-评估用的流式输出测试脚本：
-- 读取 configs/llmapi/evaluate_api.yaml 和 configs/llmapi/evaluate_agent.yaml
-- 合并得到指定 agent 的最终调用配置
-- 向 chat/completions 接口发请求，并在终端流式打印模型回复
+Streaming output test script for the evaluate agent:
+- Reads configs/llmapi/evaluate_api.yaml and configs/llmapi/evaluate_agent.yaml
+- Merges them to obtain the final call config for the specified agent
+- Sends a request to the chat/completions endpoint and streams the model reply to the terminal
 
-运行方式（在项目根目录）：
+Usage (from project root):
     python -m src.client.test_evaluate_agent
 """
 
-from __future__ import annotations 
+from __future__ import annotations
 
 import json
 from pathlib import Path
@@ -30,7 +30,7 @@ SYSTEM_PROMPT = (
 
 def _deep_merge_dict(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
     """
-    简单的递归字典合并：override 覆盖 base。
+    Simple recursive dict merge: override takes precedence over base.
     """
     result = dict(base)
     for k, v in override.items():
@@ -47,7 +47,7 @@ def _deep_merge_dict(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str
 
 def load_evaluate_agent_config(agent_name: str) -> Dict[str, Any]:
     """
-    加载并合并 evaluate_api.yaml + evaluate_agent.yaml 中的配置，返回：
+    Load and merge evaluate_api.yaml + evaluate_agent.yaml for the specified agent. Returns:
     {
         "url": ...,
         "headers": {...},
@@ -64,14 +64,14 @@ def load_evaluate_agent_config(agent_name: str) -> Dict[str, Any]:
 
     agent_cfg = agents_cfg[agent_name] or {}
 
-    # 读取 evaluate_api.yaml 作为基础配置
+    # Read evaluate_api.yaml as the base config
     with api_cfg_path.open("r", encoding="utf-8") as f:
         api_cfg = yaml.safe_load(f) or {}
 
     base_params = api_cfg.get("parameters", {}) or {}
     agent_params = agent_cfg.get("parameters", {}) or {}
 
-    # 深度合并 parameters（agent 覆盖 api）
+    # Deep-merge parameters (agent overrides api)
     merged_params = _deep_merge_dict(base_params, agent_params)
 
     url = merged_params.get("url") or api_cfg.get("parameters", {}).get("url")
@@ -111,7 +111,7 @@ def stream_chat_with_history(
 
     with requests.post(url, headers=headers, json=body, stream=True, timeout=300) as resp:
         resp.raise_for_status()
-        # OpenAI 风格的 SSE：每行以 'data: ' 开头
+        # OpenAI-style SSE: each line starts with 'data: '
         for line in resp.iter_lines(decode_unicode=True):
             if not line:
                 continue
@@ -146,7 +146,7 @@ def main() -> None:
     - Type your messages, press Enter to send.
     - Press Enter on empty line or type 'exit' / 'quit' to stop.
     """
-    # 提示用户输入 agent name
+    # Prompt user to select an agent name
     print("Available agents from configs/llmapi/evaluate_agent.yaml:")
     agent_cfg_path = LLMAPI_DIR / "evaluate_agent.yaml"
     with agent_cfg_path.open("r", encoding="utf-8") as f:
@@ -154,16 +154,16 @@ def main() -> None:
     for agent_name in agents_cfg.keys():
         print(f"  - {agent_name}")
     print()
-    
+
     agent_name = input("Enter agent name: ").strip()
     if not agent_name:
         print("Error: Agent name cannot be empty.")
         return
-    
+
     if agent_name not in agents_cfg:
         print(f"Error: Agent '{agent_name}' not found in {agent_cfg_path}")
         return
-    
+
     # history follows OpenAI chat format:
     # - role: "system" | "user" | "assistant"
     # - content: text message

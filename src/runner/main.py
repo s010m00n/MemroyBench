@@ -45,7 +45,7 @@ class LocomoSessionWrapper:
 
     用于在不需要完整 Session 交互的情况下，简化 locomo 任务的执行流程
     """
-    def __init__(self, session_id: int, llm_agent, memory_for_enhance, task_name, locomo_task_instance):
+    def __init__(self, session_id: int, llm_agent, memory_for_enhance, task_name, locomo_task_instance, training_mode: str = "online"):
         from src.server.tasks.locomo.task_base import Session
 
         # 继承 Session 的初始化
@@ -56,6 +56,7 @@ class LocomoSessionWrapper:
         self.memory_for_enhance = memory_for_enhance
         self.task_name = task_name
         self.locomo_task_instance = locomo_task_instance
+        self.training_mode = training_mode
         self._loop = None
 
     def inject(self, messages):
@@ -114,13 +115,20 @@ class LocomoSessionWrapper:
                             where_ground_truth = [current_session_id]
 
                     if where_ground_truth:
-                        # 构造插入的 session messages（可能来自多个 session）
-                        session_messages = []
-                        for session_id in where_ground_truth:
-                            # 获取该 session 的历史对话
-                            session_history = self.locomo_task_instance.get_session_history(session_id)
+                        # Determine which sessions to inject based on training_mode:
+                        # - offline: inject ALL sessions (model has seen all conversations before testing)
+                        # - online/transfer/replay/repair: inject sessions 1..max(where_ground_truth),
+                        #   simulating what the agent has accumulated in the conversation stream so far
+                        all_session_ids = self.locomo_task_instance.session_ids
+                        if self.training_mode == "offline":
+                            sessions_to_inject = all_session_ids
+                        else:
+                            max_session = max(where_ground_truth)
+                            sessions_to_inject = [s for s in all_session_ids if s <= max_session]
 
-                            # 将历史对话以 user 角色插入
+                        session_messages = []
+                        for session_id in sessions_to_inject:
+                            session_history = self.locomo_task_instance.get_session_history(session_id)
                             for hist_item in session_history:
                                 session_messages.append({
                                     "role": "user",
@@ -132,7 +140,7 @@ class LocomoSessionWrapper:
                         if len(messages) >= 2 and messages[0].get("role") == "system":
                             # 在 system prompt 和 question 之间插入 session(s)
                             messages = [messages[0]] + session_messages + messages[1:]
-                            print(f"  -> [Zero-shot + Locomo] Injected {len(where_ground_truth)} session(s) {where_ground_truth} ({len(session_messages)} messages) for QA {sample_index}")
+                            print(f"  -> [Zero-shot + Locomo] Injected {len(sessions_to_inject)} session(s) {sessions_to_inject} ({len(session_messages)} messages) for QA {sample_index} (mode={self.training_mode})")
 
                             # 同时将这些历史session消息注入到self.history中，以便保存时包含它们
                             # 插入位置：在system prompt之后，current question之前
@@ -599,7 +607,7 @@ def main() -> None:
                     try:
                         # 对于 locomo 任务，使用任务实例
                         if is_locomo_task(actual_task_name) and locomo_task_instance and locomo_task_name == actual_task_name:
-                            session = LocomoSessionWrapper(sample_idx, llm_agent, memory_for_enhance, actual_task_name, locomo_task_instance)
+                            session = LocomoSessionWrapper(sample_idx, llm_agent, memory_for_enhance, actual_task_name, locomo_task_instance, training_mode)
                             task_result = locomo_task_instance.sync_start_sample(sample_idx, session)
 
                             # 提取 messages 和 reward
@@ -801,7 +809,7 @@ def main() -> None:
                 # 对于 locomo 任务，直接使用任务实例，不需要后端
                 if is_locomo_task(task_name) and locomo_task_instance is not None and locomo_task_name == task_name:
                     # 创建包装的 Session
-                    session = LocomoSessionWrapper(sample_index, llm_agent, memory_for_enhance, task_name, locomo_task_instance)
+                    session = LocomoSessionWrapper(sample_index, llm_agent, memory_for_enhance, task_name, locomo_task_instance, training_mode)
                     
                     # 直接调用任务实例的 sync_start_sample
                     task_result = locomo_task_instance.sync_start_sample(sample_index, session)
@@ -901,7 +909,7 @@ def main() -> None:
                                 immediate_test_agent_name = execution_engine.config.agent_name
 
                             # 创建新的 session 用于立即测试
-                            immediate_test_session = LocomoSessionWrapper(sample_index, llm_agent, memory_for_enhance, task_name, locomo_task_instance)
+                            immediate_test_session = LocomoSessionWrapper(sample_index, llm_agent, memory_for_enhance, task_name, locomo_task_instance, training_mode)
 
                             # 执行测试（仅enhance，不update）
                             test_task_result = locomo_task_instance.sync_start_sample(sample_index, immediate_test_session)
@@ -1191,7 +1199,7 @@ def main() -> None:
                                     # 对于 locomo 任务，使用 LocomoSessionWrapper 执行前向测试
                                     if is_locomo_task(test_task_name) and locomo_task_instance is not None and locomo_task_name == test_task_name:
                                         # 创建包装的 Session（只 enhance，不 update）
-                                        test_session = LocomoSessionWrapper(test_sample_index, llm_agent, memory_for_enhance, test_task_name, locomo_task_instance)
+                                        test_session = LocomoSessionWrapper(test_sample_index, llm_agent, memory_for_enhance, test_task_name, locomo_task_instance, training_mode)
 
                                         # 直接调用任务实例的 sync_start_sample
                                         test_task_result = locomo_task_instance.sync_start_sample(test_sample_index, test_session)
@@ -1676,7 +1684,7 @@ def main() -> None:
                             
                             print(f"  -> Completed: status={result.get('status', 'unknown') if isinstance(result, dict) else 'unknown'} (saved to replay{current_replay_id}/test)")
                         else:
-                            logger.warning(f"[Replay] Test sample {sample_index} has invalid current_replay_id={current_replay_id}, skipping save")
+                            print(f"[Replay] Test sample {sample_index} has invalid current_replay_id={current_replay_id}, skipping save")
                         continue  # 跳过后续的保存逻辑
                     else:
                         # 训练样本：保存到当前及之后所有 replay 的 train 文件夹
@@ -1895,7 +1903,7 @@ def main() -> None:
                 # 对于 locomo 任务，直接使用任务实例，不需要后端
                 if is_locomo_task(task_name) and locomo_task_instance is not None and locomo_task_name == task_name:
                     # 创建包装的 Session
-                    session = LocomoSessionWrapper(sample_index, llm_agent, memory_for_enhance, task_name, locomo_task_instance)
+                    session = LocomoSessionWrapper(sample_index, llm_agent, memory_for_enhance, task_name, locomo_task_instance, training_mode)
                     
                     # 直接调用任务实例的 sync_start_sample
                     task_result = locomo_task_instance.sync_start_sample(sample_index, session)
